@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "poly2graph"
+dynamic = ["version"]
+description = "Automated Non-Hermitian Spectral Graph Construction"
+authors = [
+    {name = "Xianquan (Sarinstein) Yan", email = "xianquanyan@gmail.com"},
+    {name = "Hakan Akgün", email = "hakanakgun317@gmail.com"},
+]
+maintainers  = [
+    {name = "Xianquan (Sarinstein) Yan", email = "xianquanyan@gmail.com"},
+]
+keywords = [
+    "non-hermitian spectral graph", "non-bloch band", "algebraic geometry", 
+    "graph representation learning", "transformer", "computer vision", 
+    "morphological image processing"
+]
+readme = {"file" = "README.md", "content-type" = "text/markdown"}
+license = {file = "LICENSE"}
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3 :: Only",
+    "Environment :: GPU :: NVIDIA CUDA"
+]
+dependencies = [
+    "numpy",
+    "numba",
+    "networkx",
+    "scikit-image",
+    "scikit-learn",
+    "gdown"
+]
+
+[project.optional-dependencies]
+require = ["torch", "torch_geometric", "tensorflow"]  # packages to install manually
+
+[project.urls]
+Homepage = "https://github.com/sarinstein-yan/poly2graph"
+Repository = "https://github.com/sarinstein-yan/poly2graph"
+
+[tool.hatch.version]
+path = "src/poly2graph/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+exclude = ["assets"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/poly2graph"]
