@@ -3,9 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "poly2graph"
-dynamic = ["version"]
-description = "Automated Non-Hermitian Spectral Graph Construction"
+name = "gnl_transformer"
+dynamic = ["version", "description"]
 authors = [
     {name = "Xianquan (Sarinstein) Yan", email = "xianquanyan@gmail.com"},
     {name = "Hakan Akgün", email = "hakanakgun317@gmail.com"},
@@ -14,40 +13,56 @@ maintainers  = [
     {name = "Xianquan (Sarinstein) Yan", email = "xianquanyan@gmail.com"},
 ]
 keywords = [
-    "non-hermitian spectral graph", "non-bloch band", "algebraic geometry", 
-    "graph representation learning", "transformer", "computer vision", 
-    "morphological image processing"
+    "non-hermitian spectral graph",
+    "non-bloch band",
+    "algebraic geometry",
+    "graph representation learning",
+    "transformer",
+    "line graph",
 ]
 readme = {"file" = "README.md", "content-type" = "text/markdown"}
 license = {file = "LICENSE"}
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 classifiers = [
-    "Development Status :: 3 - Alpha",
-    "License :: OSI Approved :: MIT License",
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Environment :: GPU :: NVIDIA CUDA"
 ]
 dependencies = [
-    "numpy",
-    "numba",
-    "networkx",
-    "scikit-image",
-    "scikit-learn",
-    "gdown"
+    "torch~=2.5",
+    "lightning",
+    "torch_geometric",
+    "tensorboard",
+    "pandas",
+    "tqdm",
+    "poly2graph",
 ]
 
 [project.optional-dependencies]
-require = ["torch", "torch_geometric", "tensorflow"]  # packages to install manually
+dev = [
+    "tensorflow-cpu",
+    "jupyterlab",
+    "plotly",
+]
 
 [project.urls]
-Homepage = "https://github.com/sarinstein-yan/poly2graph"
-Repository = "https://github.com/sarinstein-yan/poly2graph"
+Homepage = "https://github.com/sarinstein-yan/GnLTransformer"
+Repository = "https://github.com/sarinstein-yan/GnLTransformer"
 
 [tool.hatch.version]
-path = "src/poly2graph/__init__.py"
+path = "src/gnl_transformer/__init__.py"
 
 [tool.hatch.build.targets.sdist]
-exclude = ["assets"]
+exclude = [
+  "assets",
+  "*.ipynb",
+  "**/*.ipynb",
+]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/poly2graph"]
+packages = ["src/gnl_transformer"]

@@ -3,7 +3,7 @@ import networkx as nx
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
-from ..poly2graph import spectral_potential, PosGoL
+from poly2graph import spectral_potential, PosGoL
 from sklearn.decomposition import PCA
 from sklearn.metrics.pairwise import cosine_similarity
 

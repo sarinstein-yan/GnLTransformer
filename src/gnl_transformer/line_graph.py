@@ -12,9 +12,9 @@ def angle_between_vecs(v1, v2, origin=None):
 
 def LG_undirected(
     G: Union[nx.Graph, nx.MultiGraph],
-    selfloops: Optional[bool] = False,
+    triplet_feature: Optional[bool] = False,
     create_using: Optional[Any] = None,
-    triplet_feature: Optional[bool] = False
+    selfloops: Optional[bool] = False,
 ):
     """Returns the line graph L of the (multi)-graph G.
 
@@ -30,7 +30,7 @@ def LG_undirected(
     selfloops : bool
         If `True`, then self-loops are included in the line graph. If `False`,
         they are excluded.
-    create_using : NetworkX graph constructor, optional (default=nx.Graph)
+    create_using : NetworkX graph constructor, optional (default=G.__class__)
        Graph type to create. If graph instance, then cleared before populated.
     triplet_feature : bool
         If `True`, calculate the angles between edges in the line graph.

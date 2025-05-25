@@ -1,245 +1,131 @@
-# GnLTransformer: Classifying the Graph Topology of Non-Hermitian Energy Spectrum with Graph Transformer
+# `GnLTransformer`: Classifying the Graph Topology of Non-Hermitian Energy Spectrum with Graph Transformer
 
 <!-- [![PyPI](https://img.shields.io/pypi/v/poly2graph)](https://pypi.org/project/poly2graph/) -->
-<!-- [![arXiv](https://img.shields.io/badge/arXiv-2412.00568---?logo=arXiv&labelColor=b31b1b&color=grey)](https://arxiv.org/abs/2412.00568) -->
-<!-- [![NeurIPS](https://img.shields.io/badge/NeurIPS-2025---?logo=https%3A%2F%2Fneurips.cc%2Fstatic%2Fcore%2Fimg%2FNeurIPS-logo.svg&labelColor=68448B&color=b3b3b3)](https://openreview.net/forum?id=00Sx577BT3) -->
-<!-- ![Test Workflow](https://github.com/PolymathicAI/poly2graph/actions/workflows/tests.yaml/badge.svg) -->
-<!-- [![Docs](https://img.shields.io/badge/docs-latest---?color=25005a&labelColor=grey)](https://polymathic-ai.org/poly2graph/) -->
-<!-- [![HuggingFace](https://img.shields.io/badge/datasets-%20?logo=huggingface&logoColor=%23FFD21E&label=Hugging%20Face&labelColor=%236B7280&color=%23FFD21E)](https://huggingface.co/collections/polymathic-ai/the-well-67e129f4ca23e0447395d74c) -->
+<!-- [![arXiv](https://img.shields.io/badge/arXiv-2412.00568---?logo=arXiv&labelColor=b31b1b&color=grey)](https://arxiv.org/abs/.) -->
 
 Topological physics is one of the most dynamic and rapidly advancing fields in modern physics. Conventionally, topological classification focuses on eigenstate windings, a concept central to Hermitian topological lattices (e.g., topological insulators). Beyond such notion of topology, we unravel a distinct and diverse graph topology emerging in non-Hermitian systems' energy spectra, featuring a kaleidoscope of exotic shapes like stars, kites, insects, and braids. The spectral graph solely depends on the algebraic form of characteristic polynomial.
 
 <p align="center">
-    <img src="https://raw.githubusercontent.com/sarinstein-yan/poly2graph/main/assets/SGs_demo.png" width="800" />
+    <img src="https://raw.githubusercontent.com/sarinstein-yan/GnLTransformer/main/assets/SGs_demo.png" width="800" />
 </p>
 
-`GnLTransformer` is an explainable graph neural network that integrates multi-head attention mechanism and leverages line graphs as dual channels to explicitly capture higher-order relationships beyond node-node interactions.
+`GnLTransformer` is an explainable graph neural network that integrates multi-head attention mechanism and leverages line graphs as dual channels to explicitly capture higher-order relationships beyond node-node interactions, e.g. the interactions between edges, triplets.
+- The dual channels of different orders of line graphs can be extended to learn representation of any high-order topology.
+- The high-order topology is explainable via the attention weights from dual channels.
+- In this work, the mutual information test shows that the high-order topological component (triplet) is more informative than the elementary topological components (node and edge) in classifying the spectral graph.
 
 <p align="center">
-    <img src="https://raw.githubusercontent.com/sarinstein-yan/poly2graph/main/assets/GnL_sketch.png" width="800" />
+    <img src="https://raw.githubusercontent.com/sarinstein-yan/GnLTransformer/main/assets/GnL_sketch.png" width="800" />
 </p>
 
-## Features
-- **Poly2Graph**
-  1. Fast construction of spectral graph from characteristic polynomial
-  2. Support for one-band and multi-band systems
-  3. Adaptive resolution for spectral potential calculation (one-band only)
-  4. Automatic Spectral Boundary Determination (one-band only)
-  5. Convert skeletonized image to its graph representation
-  6. Dataset generation (one-band only)
-  7. Visualization of spectral potential, density of states, and spectral graph
+## Content of the Repository
+This repository provides the code for the companion paper — *Classifying the Graph Topology of Non-Hermitian Energy Spectrum with Graph Transformer*. Specifically, it includes:
 
-- **GnLTransformer**
-  1. Line graph as dual channels. Extensible to capture any higher-order relationships.
-  2. Explainability: Multi-head attention
-  3. Visualization of node & edge attention weights and embedding similarity matrices
+1. Dataset generation, sampled from a hypercube in a one-band characteristic polynomial space.
+
+2. Featurization of the spatial multigraph and its line graph.
+  <!-- - **The spectral graph ($\mathcal{G}$)**
+    - Node features: 
+      - **`pos`, 2D**: position of node, (Re(E), Im(E)), Coordinates of the vertices in the complex energy plane 
+    - Edge features:
+      - **`weight`, 1D**: The **length** of the edge line segment in the complex energy plane. Also serves as the edge **weight**.
+      - **`pts_5`, 10D**: five equidistant points along the edge line segment that divide the edge into six equal parts. This feature is the concatenation of the five points' coordinates.
+  - **The line graph of the spectral graph ($\mathcal{L}=L(\mathcal{G})$)**
+    - Node features:
+      - *Shared with the spectral graph's edge features, 11D*
+    - Edge features:
+      - **`triplet_center`, 2D**: The position of the center of the triplet formed by the two edges in the line graph. Specifically, this is the average of the three edge endpoints' coordinates in the complex energy plane.
+      - **`angle`, 5D**: The angle between the two edges in the line graph, measured in the complex energy plane. -->
+<table>
+  <thead>
+    <tr>
+      <th style="text-align:center;">Graph</th>
+      <th style="text-align:center;">Component</th>
+      <th style="text-align:center;">Feature Name</th>
+      <th style="text-align:center;">Shape</th>
+      <th style="text-align:center;">Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <!-- Spectral graph group -->
+    <tr>
+      <td rowspan="3" style="text-align:center; vertical-align:middle;">Spectral graph (𝒢)</td>
+      <td style="text-align:center;">Node</td>
+      <td><code>pos</code></td>
+      <td>2D</td>
+      <td>Position of the node in the complex energy plane: (Re(E), Im(E)).</td>
+    </tr>
+    <tr>
+      <!-- Graph cell spanned -->
+      <td rowspan="2" style="text-align:center; vertical-align:middle;">Edge</td>
+      <td><code>weight</code></td>
+      <td>1D</td>
+      <td>Length of the edge segment in the complex energy plane; also serves as the edge weight.</td>
+    </tr>
+    <tr>
+      <!-- Graph and Entity cells spanned -->
+      <td><code>pts_5</code></td>
+      <td>10D</td>
+      <td>Coordinates of five equidistant points along the edge, dividing it into six equal parts (5×2D).</td>
+    </tr>
+    <!-- Line graph group -->
+    <tr>
+      <td rowspan="3" style="text-align:center; vertical-align:middle;">Line graph (ℒ = L(𝒢))</td>
+      <td style="text-align:center;">Node</td>
+      <td><em>*inherits*</em></td>
+      <td>11D</td>
+      <td>Same as the spectral graph’s edge features (<code>weight</code> + <code>pts_5</code>).</td>
+    </tr>
+    <tr>
+      <!-- Graph cell spanned -->
+      <td rowspan="2" style="text-align:center; vertical-align:middle;">Edge</td>
+      <td><code>triplet_center</code></td>
+      <td>2D</td>
+      <td>Center position of the triplet formed by two adjacent edges: average of the three endpoints’ coordinates.</td>
+    </tr>
+    <tr>
+      <!-- Graph and Entity cells spanned -->
+      <td><code>angle</code></td>
+      <td>5D</td>
+      <td>Angles between the two edges in the complex energy plane (one per segment junction, total 5).</td>
+    </tr>
+  </tbody>
+</table>
+
+3. Processing the `NetworkX MultiGraph` dataset to a [`PyTorch Geometric`](https://pyg.org/) Dataset.
+
+4. The `AttentiveGnLConv` layer and `GnLTransformer` model.
+
+5. Training, evaluation, ablation, and explainability visualization.
 
 ## Installation
-
-First make sure you have installed [`tensorflow`](https://www.tensorflow.org/) [`pytorch`](https://pytorch.org/), and [`torch_geometric`]( https://pytorch-geometric.readthedocs.io/en/latest/) according to your machine specifics. This module is tested on `Python 3.9~3.12`, `tensorflow >=2.10`, `torch >=2.4 + cu121`, and `torch_geometric >=2.6`.
-
-`tensorflow` (CPU version is enough) is required for the optimization of `poly2graph`. `GnLTransformer` is written in `pytorch` and `torch_geometric`.
-
-You can install the package via pip:
-
+The repository requires `python>=3.11` and can be installed locally.
 ```bash
-$ pip install poly2graph
+$ conda create -n gnl python=3.12 # python>=3.11
+$ conda activate gnl
+
+$ git clone https://github.com/sarinstein-yan/GnLTransformer.git
+$ cd GnLTransformer
+$ pip install .
 ```
-
-or clone the repository and install it manually:
-
+Or if you want to install with a specific CUDA version of PyTorch, you can set the `CUDA` environment variable to the desired version (e.g., `cu124` for CUDA 12.4):
 ```bash
-$ git clone https://github.com/sarinstein-yan/poly2graph.git
-$ cd poly2graph
-$ pip install -e . # or turn off the editable mode running `pip install .`
+$ export CUDA=cu124 # < On Linux or macOS
+# On Windows (PowerShell): `$CUDA = "cu124"`
+$ pip install . --extra-index-url https://download.pytorch.org/whl/${CUDA}
+```
+To install development version for faster dataset generation and visualization, you can use:
+```bash
+$ pip install -e .[dev]
 ```
 
-Check the installation:
+## Dataset Generation
 
-```python
-import poly2graph as p2g
-print(p2g.__version__)
-```
-
-## Usage
-
-See the [Poly2Graph Tutorial JupyterNotebook](https://github.com/sarinstein-yan/poly2graph/blob/main/poly2graph_demo.ipynb).
-
-Here we only list the core few functionalities.
-
-### One-band Spectral Graph
-
-Take a one-band characteristic polynomial as an example:
-
-$$P(E,z) = -z^{-2} - E - z + z^4$$
-
-its coefficient list is `c = [0, 0, -1, 0, 0, -1, 0, 0, 1]`. `poly2graph` only takes in **symmetric** coefficient list where the middle element is the constant term (i.e. the coefficient of $z^0$). This is how `poly2graph` identifies the degree range. Note that the $-E$ term appearing as an addition to the constant term is the same for all one-band systems; thus there's no need to specify it. `poly2graph` automatically takes care.
-
-```python
-### coefficient list (symmetrically formatted)
-c = np.array([0, 0, -1, 0, 0, -1, 0, 0, 1])
-```
-
-Call `spectral_graph` with the coefficient list `c` and the energy range `E_max`, it will return the spectral graph as a networkx multigraph object.
-
-The complex energy domain should be square grid that contains the spectral graph. The parameter `E_max` could be a list of 4 real numbers that specifies 
-```
-[Re(E)_min, Re(E)_max, Im(E)_min, Im(E)_max]
-```
-or a single real number which will be interpreted as
-```
-E_max = Re(E)_max = Re(E)_min = Im(E)_max = Im(E)_min
-```
-
-> [!TIP]
-> The recommended way is to call `auto_Emaxes` to automatically determine the energy range (but so far it only supports one-band polynomial). Pass `c` as a `numpy.array`; otherwise, numba will raise an error.
-
-```python
-### automatic boundaries of the energy grid
-# `c` should be numpy array if `auto_Emaxes` is called
-# otherwise numba will raise an error
-E_maxes = p2g.auto_Emaxes(c)
-print('Re(E) (min):', E_maxes[0], '  Re(E) (max):', E_maxes[1])
-print('Im(E) (min):', E_maxes[2], '  Im(E) (max):', E_maxes[3])
-
-### spectral graph
-sg = p2g.spectral_graph(c, E_max=E_maxes)
-print('\nObject type:', type(sg))
-
-### plot spectral graph
-fig, ax = plt.subplots(figsize=(3, 3))
-pos_dict = {i[0]: (i[1][1], i[1][0]) for i in sg.nodes(data='o')}
-nx.draw_networkx(sg, pos=pos_dict, ax=ax,
-                 node_size=50, node_color='#A60628', with_labels=False, 
-                 width=5, edge_color='#348ABD')
-plt.show()
-```
-```text
-Re(E) (min): -2.4020020322545883   Re(E) (max): 2.5671486238803536
-Im(E) (min): -2.4845753280674696   Im(E) (max): 2.4845753280674723
-
-Object type: <class 'networkx.classes.multigraph.MultiGraph'>
-```
-<p align="center">
-    <img src="https://raw.githubusercontent.com/sarinstein-yan/poly2graph/main/assets/spectral_graph_one_band.png" width="300" />
-</p>
-
-Let us diagonalize a real-space Hamiltonian to verify the spectral graph overlaps with the energy spectrum in thermodynamic limit ($L\to\infty$), and visualize the density of states (DOS) in TDL (see the companion paper for details).
-
-The DOS, $\rho(E)$, is proportional to the lapaclacian of the spectral potential, $\Phi(E)$:
-
-$$\rho(E) = -\frac{1}{2\pi} \Delta \Phi(E)$$
-
-$\Delta = \partial_{\text{Re} E}^2 + \partial_{\text{Im} E}^2$ is the Laplacian operator on the complex energy plane. Laplacian operator extracts curvature; thus, geometrically speaking, the loci of spectral graph resides on the *ridges* of the Coulomb potential landscape.
-
-```python
-fig, ax = plt.subplots(1,3, figsize=(8,3), sharex=True, sharey=True,
-                       gridspec_kw={'hspace':.0, 'wspace':.0})
-
-num_sites = [50, 150]
-for i, num_site in enumerate(num_sites):
-    ### the spectrum of a finite real-space Hamiltonian
-    energies = p2g.real_space_spectra_1band(c, num_site)
-    ax[i].scatter(*energies, s=8, c='k', alpha=.6)
-    ax[i].set(aspect='equal', xlim=E_maxes[:2], ylim=E_maxes[2:])
-    ax[i].text(.95, .95, f'({chr(97+i)}) $L = {num_site}$',
-                ha='right', va='top', transform=ax[i].transAxes)
-    ax[i].tick_params(axis='both', which='both', pad=2, direction='in')
-    ax[i].set_xlabel('Re($E$)', labelpad=.1)
-    if i == 0: ax[i].set_ylabel('Im($E$)', labelpad=.0)
-
-### the spectral potential
-# the `E_len` parameter is the number of points per energy axis
-phi = p2g.spectral_potential(c, E_max=E_maxes, E_len=200)
-### the density of states (i.e. the laplacian of the spectral potential)
-dos = p2g.PosGoL(phi) # `PosGoL` is our custom laplacian operator
-ax[-1].imshow(dos, cmap='gray', origin='lower', extent=E_maxes, aspect='equal')
-ax[-1].set_xlabel('Re($E$)', labelpad=.1)
-ax[-1].text(.97, .97, '(c) DOS in TDL\n( $L\\to \infty$ )', color='w',
-                ha='right', va='top', transform=ax[-1].transAxes)
-ax[-1].tick_params(axis='both', which='both', pad=2, direction='in', color='w')
-plt.show()
-```
-<p align="center">
-    <img src="https://raw.githubusercontent.com/sarinstein-yan/poly2graph/main/assets/SG_demo_obc.png" width="800" />
-</p>
-
-### Node, Edge, and Graph-level Attributes
-
-- Node
-  1. `o`: the position of the node $(\text{Re}(E), \text{Im}(E))$
-  2. `dos`: the density of states at the node
-  3. `potential`: the spectral potential at the node
-- Edge
-  1. `weight`: the length of the edge
-  2. `pts`: the positions of the points constituting the edge
-  3. `avg_dos`: the average density of states along the edge
-  4. `avg_potential`: the average spectral potential along the edge
-- Graph
-  1. `E_max`: the energy range (as a list of 4 real numbers)
-  2. `E_len`: the grid resolution (i.e. the number of nodes along the real / imaginary axes)
-  3. `polynomial_coeff`: the coefficient list of the characteristic polynomial (symmetrically formatted, as a numpy array)
-
-### Multi-band Spectral Graph
-
-Take a multi-band characteristic polynomial as an example:
-
-$$P(E,z) = z^{-1} + \frac{1}{2} E z - E^{2} + z^2$$
-
-whose minimal Hamiltonian is
-```
-h(z) = [[ (1/2) z,        z^2 + z^(-1) ],
-        [     1,                0      ]]
-```
-where the phase factor is defined as $z:=e^{ik}$.
-
-`poly2graph` only takes in **symmetric** (rectangular) coefficient **matrix** where the middle element is the constant term (i.e. the coefficient of $z^0 E^0$):
-```
-   [[ ...     ...           ...           ...          ...          ...     ... ]
-    [ ... c(z^-2 E^-2)  c(z^-1 E^-2)  c(z^0 E^-2)  c(z^1 E^-2)  c(z^2 E^-2) ... ]
-    [ ... c(z^-2 E^-1)  c(z^-1 E^-1)  c(z^0 E^-1)  c(z^1 E^-1)  c(z^2 E^-1) ... ]
-c = [ ... c(z^-2 E^0)   c(z^-1 E^0)   c(z^0 E^0)   c(z^1 E^0)   c(z^2 E^0)  ... ]
-    [ ... c(z^-2 E^1)   c(z^-1 E^1)   c(z^0 E^1)   c(z^1 E^1)   c(z^2 E^1)  ... ]
-    [ ... c(z^-2 E^2)   c(z^-1 E^2)   c(z^0 E^2)   c(z^1 E^2)   c(z^2 E^2)  ... ]
-    [ ...     ...           ...           ...           ...           ...   ... ]]
-```
-
-Thus for this particular example, its coefficient matrix is:
-```
-c = [[ 0,   0,    0,    0,    0 ],
-     [ 0,   0,    0,    0,    0 ],
-     [ 0,   1,    0,    0,    1 ],
-     [ 0,   0,    0,  1/2,    0 ],
-     [ 0,   0,   -1,    0,    0 ]]
-```
-```python
-C = np.zeros((5,5))
-C[2,1] = 1; C[2,-1] = 1; C[-2,-2] = 1/2; C[-1,2] = -1
-
-Sg = p2g.spectral_graph(C, E_max=3)
-fig, ax = plt.subplots(figsize=(3, 3))
-pos_dict = {i[0]: (i[1][1], i[1][0]) for i in Sg.nodes(data='o')}
-nx.draw_networkx(Sg, pos=pos_dict, ax=ax,
-                 node_size=50, node_color='#A60628', with_labels=False, 
-                 width=5, edge_color='#348ABD')
-plt.show()
-```
-<p align="center">
-    <img src="https://raw.githubusercontent.com/sarinstein-yan/poly2graph/main/assets/spectral_graph_multi_band.png" width="300" />
-</p>
-
-> [!NOTE] 
-> Note that `auto_Emaxes` and `E_splits > 1` are not yet supported for multi-band polynomials.
-
-## TODO
-- [ ] Multi-band system support
-  - [ ] Automatic energy grid boundary determination
-  - [ ] Adaptive resolution
-  - [ ] Dataset generation
+<!-- ## TODO
 - [ ] Tutorials
   - [ ] dataset generation
   - [ ] `GnLTransformer`
-  - [ ] explainability visualizations
+  - [ ] explainability visualizations -->
 
 <!-- ## Citation
 If you find this work useful, please cite our paper:
