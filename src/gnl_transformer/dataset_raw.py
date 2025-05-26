@@ -275,40 +275,6 @@ def generate_dataset_in_coeff_hypercube(
     )
     print(f"The full dataset saved → {out}")
 
-# --- HSG-topology helper functions --- #
-def _simple_copy_with_multiplicity(g_multi: nx.MultiGraph):
-    """Collapse a (multi)graph into a simple Graph, recording multiplicity."""
-    if not g_multi.is_multigraph():
-        return g_multi          # already simple, nothing to do
-
-    g_simple = nx.Graph() if isinstance(g_multi, nx.MultiGraph) else nx.DiGraph()
-    g_simple.add_nodes_from(g_multi.nodes(data=True))
-
-    for u, v, _k, data in g_multi.edges(keys=True, data=True):
-        if g_simple.has_edge(u, v):
-            g_simple[u][v]["m"] += 1          # bump multiplicity
-        else:
-            g_simple.add_edge(u, v, **data, m=1)
-    return g_simple
-
-def wl_hash_safe(g, iters=3):
-    """WL hash that tolerates MultiGraphs by collapsing them first."""
-    g_for_hash = _simple_copy_with_multiplicity(g)
-    return nx.weisfeiler_lehman_graph_hash(
-        g_for_hash,
-        iterations=iters,
-        edge_attr="m"  # include multiplicity in the label
-    )
-
-def unique_indices_by_hash(graphs, iters=3, n_jobs=-1):
-    hashes = Parallel(n_jobs=n_jobs, batch_size=256)(
-        delayed(wl_hash_safe)(g, iters=iters) for g in graphs
-    )
-    first_seen = {}
-    for idx, h in enumerate(hashes):
-        first_seen.setdefault(h, idx)
-    return list(first_seen.values())
-
 
 if __name__ == "__main__":
     import argparse
