@@ -41,6 +41,7 @@ dependencies = [
     "pandas",
     "tqdm",
     "poly2graph",
+    "huggingface_hub",
 ]
 
 [project.optional-dependencies]

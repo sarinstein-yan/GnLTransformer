@@ -1,130 +1,149 @@
 import numpy as np
 import networkx as nx
-from itertools import combinations
 from joblib import Parallel, delayed
 from typing import Any, Optional, Union
 
 
-# Geometry helpers
+# helper ─ angle between two vectors (optionally translated to a common origin)
 def angle_between(v1: np.ndarray,
                   v2: np.ndarray,
                   origin: Optional[np.ndarray] = None) -> float:
-    """
-    Return the angle (rad) between vectors v1 and v2, optionally translated so
-    that *origin* acts as the common tail.
-    """
     if origin is not None:
         v1, v2 = v1 - origin, v2 - origin
+
     denom = np.linalg.norm(v1) * np.linalg.norm(v2)
     if denom == 0:
         return 0.0
-    # Clip protects against FP inaccuracy
+
+    # numerical safety
     return float(np.arccos(np.clip(np.dot(v1, v2) / denom, -1.0, 1.0)))
 
 
-# Line-graph builder
+# main API ─ undirected line graph
 def line_graph_undirected(
     G: Union[nx.Graph, nx.MultiGraph],
     *,
-    with_triplet_angles: bool = False,
-    include_selfloops: bool = False,
-    create_using: Optional[Any] = None,
+    with_triplet_features: bool = False,
+    create_using: Any = None,
+    add_selfloops: bool = False,
     relabel_nodes: bool = False,
-) -> nx.Graph:
+):
     """
-    Build the undirected line graph L(G).
-
-    Every edge (u, v[, key]) in *G* becomes a node in L(G).  
-    Two nodes in L(G) share an edge iff their corresponding edges in *G* are
-    incident on a common endpoint.
+    Construct the undirected *line graph* L of G.
 
     Parameters
     ----------
     G : nx.Graph | nx.MultiGraph
-    with_triplet_angles : bool, default False
-        Replicates the original “triplet feature”:
-        * joint node attributes of the shared endpoint
-        * triplet center         (mean of three endpoint positions)
-        * list of incident angles (first is ∠ (u-common-v); the rest come from
-          optional `'pts2'` samples stored on each edge in *G*)
-    include_selfloops : bool, default False
-        Keep e–e self-loops in L(G).  They are ignored by default.
+        Source (multi-)graph.
+    with_triplet_features : bool, optional
+        Add ``joint_node_attr``, ``triplet_center`` and ``angle`` features.
     create_using : graph constructor, optional
-        Lets you build e.g. an `nx.MultiGraph` line graph by passing
-        `create_using=nx.MultiGraph`.
+        Graph type for the output (default → ``G.__class__``).
+    add_selfloops : bool, optional
+        If True, allow self-loops in L (an edge of G paired with itself).
     relabel_nodes : bool, default False
         If True, the nodes in the line graph will be relabeled to integers
         starting from 0. This is useful for compatibility with some algorithms
         that expect integer node labels.
-
+    
     Returns
     -------
-    nx.Graph (or the type you supply via *create_using*)
+    nx.Graph | nx.MultiGraph
+        The resulting line graph.
     """
-    # Small helpers
-    def canonical(u, v, k=None):
-        """Stable, hashable identifier for an (undirected) edge."""
-        return (u, v, k) if u <= v else (v, u, k)
+    # ------------------------------------------------------------------
+    # 0.  Boiler-plate / helpers
+    # ------------------------------------------------------------------
+    L = nx.empty_graph(0, create_using, default=G.__class__)
+    node_index = {n: i for i, n in enumerate(G)}          # stable order
 
-    # Prep: collect edge list and fast incidence map
+    # edge iterator that always yields (u, v, key, data_dict)
     if G.is_multigraph():
-        all_edges = [(u, v, k, d)
-                     for u, v, k, d in G.edges(keys=True, data=True)]
+        edge_iter = lambda n: G.edges(n, keys=True, data=True)
     else:
-        all_edges = [(u, v, None, d)
-                     for u, v, d in G.edges(data=True)]
+        edge_iter = lambda n: ((u, v, None, d) for u, v, d in G.edges(n, data=True))
 
-    incidence = {n: [] for n in G}               # node → list[(canonical-id, raw-edge)]
-    for u, v, k, d in all_edges:
-        cid = canonical(u, v, k)
-        incidence[u].append((cid, (u, v, k, d)))
-        incidence[v].append((cid, (u, v, k, d)))
+    # canonical representation of an edge (u < v by node_index)
+    def canonical(u, v, k):
+        return (u, v, k) if node_index[u] < node_index[v] else (v, u, k)
 
-    # Create L(G) and populate edge-nodes
-    L = nx.empty_graph(0, create_using)          # preserves the template type
+    edge_seen = set()      # avoid double-adding edges to L
+    shift = 0 if add_selfloops else 1
 
-    for cid, (_, _, _, data) in {canonical(u, v, k): (u, v, k, d)
-                                 for u, v, k, d in all_edges}.items():
-        L.add_node(cid, **data)
+    # ------------------------------------------------------------------
+    # 1.  For every *vertex* in G …
+    #     * collect its incident edges (already canonicalised)
+    #     * add the corresponding nodes to L
+    #     * connect every unordered pair of those edges
+    # ------------------------------------------------------------------
+    for tail in G:
+        incident = []  # [(canon_edge, raw_edge_tuple)] for this tail
 
-    # Connect edge-nodes sharing a common endpoint
-    for shared in G:
-        incident = incidence[shared]
-        if not incident:
+        for u, v, k, data in edge_iter(tail):
+            c = canonical(u, v, k)
+            L.add_node(c, **data)          # edge->node transfer
+            if 'pts5' in data:
+                L.nodes[c]['pos'] = data['pts5'][4:6]
+            incident.append((c, (u, v, k)))  # remember the *raw* tuple too
+
+        # vertex of degree-1 ⇒ its single incident edge becomes isolated node
+        if len(incident) == 1:
             continue
 
-        if include_selfloops:
-            # (e_i, e_j) including i == j
-            pair_iter = ((incident[i], incident[j])
-                         for i in range(len(incident))
-                         for j in range(i, len(incident)))
-        else:
-            pair_iter = combinations(incident, 2)
+        # pairwise combinations (shift skips or keeps the i==j case)
+        for i, (c_a, raw_a) in enumerate(incident):
+            for c_b, raw_b in incident[i + shift:]:
 
-        for (cid_a, (u1, v1, k1, d1)), (cid_b, (u2, v2, k2, d2)) in pair_iter:
-            if cid_a == cid_b:
-                continue                                          # skip trivial
-            attr = {}
-            if with_triplet_angles:
-                pos_shared = G.nodes[shared]['pos']
-                other1 = v1 if u1 == shared else u1
-                other2 = v2 if u2 == shared else u2
-                pos1, pos2 = G.nodes[other1]['pos'], G.nodes[other2]['pos']
+                # undirected → ensure ordering in the (frozenset-like) key
+                ekey = tuple(sorted((c_a, c_b), key=lambda x: (node_index[x[0]], node_index[x[1]])))
+                if ekey in edge_seen:
+                    continue
+                edge_seen.add(ekey)
 
-                attr['joint_node_attr'] = G.nodes[shared]
-                attr['triplet_center'] = np.mean([pos_shared, pos1, pos2],
-                                                 axis=0)
+                # ------------------------------------------------------
+                # shared tail vertex  (might be ambiguous for self-loops;
+                # pop() replicates the “arbitrary but deterministic” choice
+                # of the original implementation)
+                # ------------------------------------------------------
+                shared = set(raw_a[:2]).intersection(raw_b[:2]).pop()
 
-                angles = [angle_between(pos1, pos2, origin=pos_shared)]
-                for pts in d1.get('pts2', ()):
-                    angles.append(angle_between(pos2, pts,
-                                                origin=pos_shared))
-                for pts in d2.get('pts2', ()):
-                    angles.append(angle_between(pos1, pts,
-                                                origin=pos_shared))
-                attr['angle'] = np.asarray(angles, dtype=np.float32)
+                # ------------------------------------------------------
+                # optional triplet-level geometric features
+                # ------------------------------------------------------
+                attr = {}
+                if with_triplet_features:
+                    # node attributes of the shared vertex
+                    attr["joint_node_attr"] = G.nodes[shared]
 
-            L.add_edge(cid_a, cid_b, **attr)
+                    # the *other* endpoints of raw_a / raw_b
+                    v = raw_a[0] if raw_a[0] != shared else raw_a[1]
+                    w = raw_b[0] if raw_b[0] != shared else raw_b[1]
+
+                    pos_shared = attr["joint_node_attr"]["pos"]
+                    pos_v      = G.nodes[v]["pos"]
+                    pos_w      = G.nodes[w]["pos"]
+
+                    # centre of the triangle (shared, v, w)
+                    attr["triplet_center"] = np.mean([pos_v, pos_w, pos_shared], axis=0)
+
+                    # angles:   ∠(v, w) plus those with intermediate pts2’s
+                    angles = [angle_between(pos_v, pos_w, origin=pos_shared)]
+
+                    data_a = G.get_edge_data(*raw_a) if raw_a[2] is None \
+                            else G.get_edge_data(*raw_a[:3])
+                    data_b = G.get_edge_data(*raw_b) if raw_b[2] is None \
+                            else G.get_edge_data(*raw_b[:3])
+
+                    if "pts2" in data_a and "pts2" in data_b:
+                        for p in data_a["pts2"]:
+                            angles.append(angle_between(pos_w, p, origin=pos_shared))
+                        for p in data_b["pts2"]:
+                            angles.append(angle_between(pos_v, p, origin=pos_shared))
+
+                    attr["angle"] = np.asarray(angles, dtype=np.float32)
+
+                # finally: add the line-graph edge
+                L.add_edge(c_a, c_b, **attr)
 
     # ensure predictable ordering if someone iterates over L.nodes
     if relabel_nodes:
@@ -143,6 +162,9 @@ def line_graph_undirected(
     
     return L
 
+
+
+
 # --- HSG-topology helper functions --- #
 def _simple_copy_with_multiplicity(g_multi: nx.MultiGraph):
     """Collapse a (multi)graph into a simple Graph, recording multiplicity."""
@@ -159,6 +181,7 @@ def _simple_copy_with_multiplicity(g_multi: nx.MultiGraph):
             g_simple.add_edge(u, v, **data, m=1)
     return g_simple
 
+
 def wl_hash_safe(g, iters=3):
     """WL hash that tolerates MultiGraphs by collapsing them first."""
     g_for_hash = _simple_copy_with_multiplicity(g)
@@ -167,6 +190,7 @@ def wl_hash_safe(g, iters=3):
         iterations=iters,
         edge_attr="m"  # include multiplicity in the label
     )
+
 
 def isomorphism_classes_by_WL_hash(graphs, iters=3, n_jobs=-1):
     hashes = Parallel(n_jobs=n_jobs, batch_size=512)(

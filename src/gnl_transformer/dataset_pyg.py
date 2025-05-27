@@ -1,57 +1,102 @@
+import os.path as osp
+import pickle
+import time
+from pathlib import Path
 import numpy as np
 import networkx as nx
+from urllib.request import urlretrieve
 import torch
-from torch_geometric.data import Data, InMemoryDataset, HeteroData
+from torch_geometric.data import Data, InMemoryDataset
 from torch_geometric.utils import from_networkx
-from ..line_graph import LG_undirected
-from .post import hash_labels
-from .sampling_1band import load_dataset
-from gdown import download_folder
 from tqdm import tqdm
-import zipfile, os
+from joblib import Parallel, delayed
+from typing import Dict, List, Optional, Sequence, Set
+from huggingface_hub import snapshot_download
 
-# helper functions
+class NHSG(InMemoryDataset):
+    def __init__(self, root, 
+                 *,
+                 transform=None, pre_transform=None, pre_filter=None):
+        super().__init__(root, transform, pre_transform, pre_filter)
+        self.load(self.processed_paths[0])
 
-import numpy as np
+    @property
+    def raw_file_names(self):
+        return ["nx_multigraph_dataset.npz", "isomorphism_classes.pkl"]
 
-from numpy.typing import ArrayLike
+    @property
+    def processed_file_names(self):
+        return ['data.pt']
 
-def hash_labels(
-    labels: ArrayLike,
-    n: int,
-    reindex: bool = False
-) -> np.ndarray:
-    '''
-    Hash labels to integers in range(n**dim) using base n representation.
-    I.e., treat each label list as a number in base n and convert to decimal.
+    def download(self):
+        cache_dir = snapshot_download(
+            repo_id="sarinstein-yan/NHSG117K",
+            repo_type="dataset",
+            allow_patterns=["raw/" + fname for fname in self.raw_file_names],
+            local_dir=self.root,
+        )
+        print("Raw Files Downloaded to:", cache_dir)
 
-    Parameters
-    ----------
-    labels : 2D Array of integers
-        Labels to be hashed.
-    n : int
-        Base for hashing.
-    reindex : bool, optional
-        Whether to reindex the hash values to be precisely integers in
-        range(n**dim). Default: False
+    def process(self):
+        extracted_file_path = os.path.join(self.raw_dir, 'dataset_graph_dim6.h5')
+        if not os.path.exists(extracted_file_path):
+            with zipfile.ZipFile(self.raw_paths[0], 'r') as zip_ref:
+                zip_ref.extractall(self.raw_dir)
+        nx_Gs, labels = load_dataset(extracted_file_path)
+        labels_signs = np.where(np.abs(labels) < 1e-6, 0, 1)
+        hashed_labels = hash_labels(labels_signs, 2)
 
-    Returns
-    -------
-    np.ndarray
-        Hashed labels.
-    '''
-    labels = np.asarray(labels)
-    assert labels.ndim == 2, "labels must be 2D array"
-    dim = labels.shape[1]
-    base_vec = np.array([n**i for i in range(dim)])
-    hash_value = base_vec @ labels.T
-    if reindex:
-        unique_hash = np.unique(hash_value)
-        hash_map = {hash_val: i for i, hash_val in enumerate(unique_hash)}
-        reassigned_hash_value = np.array([hash_map[val] for val in hash_value])
-        return reassigned_hash_value
-    else:
-        return hash_value
+        G_list = []
+        for i, nx_G in tqdm(enumerate(nx_Gs), total=len(nx_Gs)):
+            nx_G = _preprocess_nx_G(nx_G)
+            pyg_G = from_networkx(nx_G, group_node_attrs=['o'], group_edge_attrs=['weight', 'pts5'])
+            G_list.append(Data(x=pyg_G.x,
+                               pos=pyg_G.pos.flip(-1),
+                               edge_index=pyg_G.edge_index,
+                               edge_attr=pyg_G.edge_attr,
+                               y=torch.tensor([hashed_labels[i]], dtype=torch.long),
+                               y_multi=torch.tensor([labels_signs[i]], dtype=torch.long),
+                               free_coeffs=torch.tensor([labels[i]], dtype=torch.float32),
+                               full_coeffs=pyg_G.polynomial_coeff.unsqueeze(0),
+                               E_max=pyg_G.E_max.unsqueeze(0)))
+
+        self.save(G_list, self.processed_paths[0])
+
+    # Graph attribute stripping
+    @staticmethod
+    def _process_edge_pts(graph: nx.MultiGraph) -> nx.MultiGraph:
+        """Return a *new* graph with compact node / edge attributes."""
+        g = graph.copy()
+        _IDX = np.arange(1, 6)
+
+        node_pos, node_pot, node_dos = {}, {}, {}
+        for nid, nd in g.nodes(data=True):
+            pos = np.asarray(nd.pop("pos"), dtype=np.float32).reshape(-1)
+            pot = np.float32(nd.pop("potential", 0.0))
+            dos = np.float32(nd.pop("dos", 0.0))
+            nd["x"] = np.array([*pos, pot, dos], dtype=np.float32)
+            node_pos[nid], node_pot[nid], node_dos[nid] = pos, pot, dos
+
+        for u, v, ed in g.edges(data=True):
+            w = np.float32(ed.pop("weight"))
+            if "pts" in ed:
+                pts = ed.pop("pts")
+                idx = np.round(_IDX * (len(pts) - 1) / 6).astype(int)
+                pts5 = pts[idx].astype(np.float32).reshape(-1)
+                avg_pot = np.float32(ed.pop("avg_potential", 0.5 * (node_pot[u] + node_pot[v])))
+                avg_dos = np.float32(ed.pop("avg_dos", 0.5 * (node_dos[u] + node_dos[v])))
+            else:
+                mid = 0.5 * (node_pos[u] + node_pos[v])
+                pts5 = np.tile(mid, 5).astype(np.float32)
+                avg_pot = np.float32(0.5 * (node_pot[u] + node_pot[v]))
+                avg_dos = np.float32(0.5 * (node_dos[u] + node_dos[v]))
+            ed["edge_attr"] = np.concatenate(([w, avg_pot, avg_dos], pts5), dtype=np.float32)
+        return g
+    
+    @staticmethod
+    def _graph_to_data(g: nx.MultiGraph):
+        ...
+
 
 def _preprocess_nx_G(spectral_graph: nx.MultiGraph) -> nx.MultiGraph:
 
