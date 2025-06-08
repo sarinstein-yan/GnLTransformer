@@ -260,3 +260,28 @@ class XGnLTransformer_Paired(GnLTransformer_Paired):
         x = self.mlp(x)
         vis_data['GnL_graph-1'] = x.clone().squeeze().detach().cpu().numpy()
         return x, vis_data
+
+class XGnLTransformer_Hetero(GnLTransformer_Hetero):
+    def forward(self, x_dict, edge_index_dict, edge_attr_dict, batch_dict):
+        vis_data = {}
+        x_G, edge_index_G, edge_attr_G, batch_G = x_dict['node'], edge_index_dict[('node', 'n2n', 'node')], edge_attr_dict[('node', 'n2n', 'node')], batch_dict['node']
+        x_L, edge_index_L, edge_attr_L, batch_L = x_dict['edge'], edge_index_dict[('edge', 'e2e', 'edge')], edge_attr_dict[('edge', 'e2e', 'edge')], batch_dict['edge']
+
+        x_G, vis_data_G = self.conv_G(x_G, edge_index_G, edge_attr_G)
+        x_L, vis_data_L = self.conv_L(x_L, edge_index_L, edge_attr_L)
+        vis_data['G_node'] = vis_data_G
+        vis_data['L_node'] = vis_data_L
+
+        x_G, _, _, batch_G, _, _ = self.pool_G(x_G, edge_index_G, edge_attr_G, batch_G)
+        x_L, _, _, batch_L, _, _ = self.pool_L(x_L, edge_index_L, edge_attr_L, batch_L)
+
+        x_G = self.sort_G(x_G, batch_G)
+        x_L = self.sort_L(x_L, batch_L)
+        vis_data['G_graph1'] = x_G.clone().squeeze().detach().cpu().numpy()
+        vis_data['L_graph1'] = x_L.clone().squeeze().detach().cpu().numpy()
+
+        x = torch.cat([x_G, x_L], dim=1)
+        x = self.mlp(x)
+        vis_data['GnL_graph-1'] = x.clone().squeeze().detach().cpu().numpy()
+        
+        return x, vis_data

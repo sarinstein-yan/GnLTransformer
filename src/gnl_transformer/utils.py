@@ -1,30 +1,35 @@
 import numpy as np
 import networkx as nx
+from functools import partial
 from joblib import Parallel, delayed
 from typing import Any, Optional, Union
 
 
-# helper ─ angle between two vectors (optionally translated to a common origin)
+# Geometry helpers
 def angle_between(v1: np.ndarray,
                   v2: np.ndarray,
                   origin: Optional[np.ndarray] = None) -> float:
+    """
+    Return the angle (rad) between vectors v1 and v2, optionally translated so
+    that *origin* acts as the common tail.
+    """
     if origin is not None:
         v1, v2 = v1 - origin, v2 - origin
 
     denom = np.linalg.norm(v1) * np.linalg.norm(v2)
     if denom == 0:
         return 0.0
-
-    # numerical safety
+    
+    # Clip protects against FP inaccuracy
     return float(np.arccos(np.clip(np.dot(v1, v2) / denom, -1.0, 1.0)))
 
 
-# main API ─ undirected line graph
+# Line-graph builder
 def line_graph_undirected(
     G: Union[nx.Graph, nx.MultiGraph],
     *,
     with_triplet_features: bool = False,
-    create_using: Any = None,
+    create_using: Optional[Any] = None,
     add_selfloops: bool = False,
     relabel_nodes: bool = False,
 ):
@@ -36,115 +41,95 @@ def line_graph_undirected(
     G : nx.Graph | nx.MultiGraph
         Source (multi-)graph.
     with_triplet_features : bool, optional
-        Add ``joint_node_attr``, ``triplet_center`` and ``angle`` features.
+        Add `pos`, `joint_node_attr`, `triplet_center` and `angle` features.
     create_using : graph constructor, optional
-        Graph type for the output (default → ``G.__class__``).
+        Graph type for the output (default → `G.__class__`).
     add_selfloops : bool, optional
         If True, allow self-loops in L (an edge of G paired with itself).
     relabel_nodes : bool, default False
         If True, the nodes in the line graph will be relabeled to integers
         starting from 0. This is useful for compatibility with some algorithms
         that expect integer node labels.
-    
+
+
     Returns
     -------
     nx.Graph | nx.MultiGraph
         The resulting line graph.
     """
-    # ------------------------------------------------------------------
-    # 0.  Boiler-plate / helpers
-    # ------------------------------------------------------------------
     L = nx.empty_graph(0, create_using, default=G.__class__)
-    node_index = {n: i for i, n in enumerate(G)}          # stable order
 
-    # edge iterator that always yields (u, v, key, data_dict)
-    if G.is_multigraph():
-        edge_iter = lambda n: G.edges(n, keys=True, data=True)
-    else:
-        edge_iter = lambda n: ((u, v, None, d) for u, v, d in G.edges(n, data=True))
-
-    # canonical representation of an edge (u < v by node_index)
-    def canonical(u, v, k):
-        return (u, v, k) if node_index[u] < node_index[v] else (v, u, k)
-
-    edge_seen = set()      # avoid double-adding edges to L
+    # Graph specific functions for edges.
+    get_edges = partial(G.edges, keys=True, data=True) if G.is_multigraph() else G.edges(data=True)
+    
+    # Determine if we include self-loops or not.
     shift = 0 if add_selfloops else 1
 
-    # ------------------------------------------------------------------
-    # 1.  For every *vertex* in G …
-    #     * collect its incident edges (already canonicalised)
-    #     * add the corresponding nodes to L
-    #     * connect every unordered pair of those edges
-    # ------------------------------------------------------------------
-    for tail in G:
-        incident = []  # [(canon_edge, raw_edge_tuple)] for this tail
+    # Introduce numbering of nodes
+    node_index = {n: i for i, n in enumerate(G)}
 
-        for u, v, k, data in edge_iter(tail):
-            c = canonical(u, v, k)
-            L.add_node(c, **data)          # edge->node transfer
+    # Lift canonical representation of nodes to edges in line graph
+    edge_key_function = lambda edge: (node_index[edge[0]], node_index[edge[1]])
+
+    edges = set()
+    for u in G:
+        # Label nodes as a sorted tuple of nodes in original graph.
+        # Decide on representation of {u, v} as (u, v) or (v, u) depending on node_index.
+        # -> This ensures a canonical representation and avoids comparing values of different types.
+        nodes = [tuple(sorted(x[:2], key=node_index.get)) + (x[2],) for x in get_edges(u)]
+
+        if len(nodes) == 1:
+            # Then the edge will be an isolated node in L.
+            edge = nodes[0]
+            canonical_edge = (min(edge[0], edge[1]), max(edge[0], edge[1]), edge[2])
+            data = G.get_edge_data(*edge[:3])
+            L.add_node(canonical_edge, **data)
             if 'pts5' in data:
-                L.nodes[c]['pos'] = data['pts5'][4:6]
-            incident.append((c, (u, v, k)))  # remember the *raw* tuple too
+                L.nodes[canonical_edge]['pos'] = data['pts5'][4:6]
 
-        # vertex of degree-1 ⇒ its single incident edge becomes isolated node
-        if len(incident) == 1:
-            continue
+        for i, a in enumerate(nodes):
 
-        # pairwise combinations (shift skips or keeps the i==j case)
-        for i, (c_a, raw_a) in enumerate(incident):
-            for c_b, raw_b in incident[i + shift:]:
+            canonical_a = (min(a[0], a[1]), max(a[0], a[1]), a[2])
+            data_a = G.get_edge_data(*a[:3])
+            L.add_node(canonical_a, **data_a)  # Transfer edge attributes to node
+            if 'pts5' in data_a:
+                L.nodes[canonical_a]['pos'] = data_a['pts5'][4:6]
+            
+            for b in nodes[i + shift:]:
+                canonical_b = (min(b[0], b[1]), max(b[0], b[1]), b[2])
+                data_b = G.get_edge_data(*b[:3])
+                edge = tuple(sorted((canonical_a, canonical_b), key=edge_key_function))
 
-                # undirected → ensure ordering in the (frozenset-like) key
-                ekey = tuple(sorted((c_a, c_b), key=lambda x: (node_index[x[0]], node_index[x[1]])))
-                if ekey in edge_seen:
-                    continue
-                edge_seen.add(ekey)
+                if edge not in edges:
+                    # find the common node u. TODO: modify for self-loops
+                    u = set(a[:2]).intersection(set(b[:2])).pop()
 
-                # ------------------------------------------------------
-                # shared tail vertex  (might be ambiguous for self-loops;
-                # pop() replicates the “arbitrary but deterministic” choice
-                # of the original implementation)
-                # ------------------------------------------------------
-                shared = set(raw_a[:2]).intersection(raw_b[:2]).pop()
+                    # optional triplet-level geometric features
+                    attr = {}
+                    if with_triplet_features:
+                        attr['joint_node_attr'] = G.nodes[u]
+                        v = a[0] if a[0] != u else a[1]
+                        w = b[0] if b[0] != u else b[1]
+                        pos_shared = attr['joint_node_attr']['pos']
+                        pos_v      = G.nodes[v]["pos"]
+                        pos_w      = G.nodes[w]["pos"]
+                        
+                        # Calculate the center of the triplet
+                        attr['triplet_center'] = np.mean([pos_v, pos_w, pos_shared], axis=0)
+                        
+                        # angles:   ∠(v, w) plus those with intermediate pts2’s
+                        angles = [angle_between(pos_v, pos_w, origin=pos_shared)]
 
-                # ------------------------------------------------------
-                # optional triplet-level geometric features
-                # ------------------------------------------------------
-                attr = {}
-                if with_triplet_features:
-                    # node attributes of the shared vertex
-                    attr["joint_node_attr"] = G.nodes[shared]
-
-                    # the *other* endpoints of raw_a / raw_b
-                    v = raw_a[0] if raw_a[0] != shared else raw_a[1]
-                    w = raw_b[0] if raw_b[0] != shared else raw_b[1]
-
-                    pos_shared = attr["joint_node_attr"]["pos"]
-                    pos_v      = G.nodes[v]["pos"]
-                    pos_w      = G.nodes[w]["pos"]
-
-                    # centre of the triangle (shared, v, w)
-                    attr["triplet_center"] = np.mean([pos_v, pos_w, pos_shared], axis=0)
-
-                    # angles:   ∠(v, w) plus those with intermediate pts2’s
-                    angles = [angle_between(pos_v, pos_w, origin=pos_shared)]
-
-                    data_a = G.get_edge_data(*raw_a) if raw_a[2] is None \
-                            else G.get_edge_data(*raw_a[:3])
-                    data_b = G.get_edge_data(*raw_b) if raw_b[2] is None \
-                            else G.get_edge_data(*raw_b[:3])
-
-                    if "pts2" in data_a and "pts2" in data_b:
-                        for p in data_a["pts2"]:
-                            angles.append(angle_between(pos_w, p, origin=pos_shared))
-                        for p in data_b["pts2"]:
-                            angles.append(angle_between(pos_v, p, origin=pos_shared))
-
-                    attr["angle"] = np.asarray(angles, dtype=np.float32)
-
-                # finally: add the line-graph edge
-                L.add_edge(c_a, c_b, **attr)
-
+                        if 'pts2' in data_a and 'pts2' in data_b:
+                            for p in data_a['pts2']:
+                                angles.append(angle_between(pos_w, p, origin=pos_shared))
+                            for p in data_b['pts2']:
+                                angles.append(angle_between(pos_v, p, origin=pos_shared))
+                        attr['angle'] = np.array(angles, dtype=np.float32)
+                    L.add_edge(canonical_a, canonical_b, **attr)
+                    edges.add(edge)
+                    # print(f"Added edge: {canonical_a} -> {canonical_b} with attributes {attr}") # Debugging
+    
     # ensure predictable ordering if someone iterates over L.nodes
     if relabel_nodes:
         # deterministic node ordering for edge-tuples
@@ -159,7 +144,7 @@ def line_graph_undirected(
         # preserve the canonical tuple under node-attr "cid"
         nx.set_node_attributes(L, {old: {"cid": old} for old in L.nodes})
         L = nx.relabel_nodes(L, mapping, copy=False)
-    
+        
     return L
 
 
