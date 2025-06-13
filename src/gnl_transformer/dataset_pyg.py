@@ -9,9 +9,9 @@ from torch_geometric.utils import from_networkx
 from tqdm import tqdm
 from joblib import Parallel, delayed
 from huggingface_hub import snapshot_download
-from gnl_transformer import line_graph_undirected
+from gnl_transformer.utils import line_graph_undirected
 
-class NHSG(InMemoryDataset):
+class NHSG117K(InMemoryDataset):
     def __init__(
         self, 
         root,
@@ -38,10 +38,11 @@ class NHSG(InMemoryDataset):
         cache_dir = snapshot_download(
             repo_id="sarinstein-yan/NHSG117K",
             repo_type="dataset",
-            allow_patterns=["raw/" + fname for fname in self.raw_file_names],
+            allow_patterns=["raw/" + fname for fname in self.raw_file_names] + \
+                            ["processed/" + fname for fname in self.processed_file_names],
             local_dir=self.root,
         )
-        print("Raw Files Downloaded to:", cache_dir)
+        print("Raw and Processed Files Downloaded to:", cache_dir)
     
     def process(self):
         threader = Parallel(n_jobs=self.n_jobs, prefer="threads")
@@ -88,17 +89,24 @@ class NHSG(InMemoryDataset):
                 'free_coeffs': torch.tensor([free_coeffs[i]], dtype=torch.float32),
             })
         
-        H_list = threader(delayed(process_graph)(graph, i)
+        data_list = threader(delayed(process_graph)(graph, i)
                           for i, graph in tqdm(enumerate(nx_graphs), 
                                                total=len(nx_graphs), 
                                                desc="Processing networkx multigraphs"))
 
+        # add 9 copies of the [0,0,0,0,0,0] sample
+        idx0 = len(data_list)//2
+        assert torch.allclose(data_list[idx0].y_multi, torch.tensor([0, 0, 0, 0, 0, 0]))
+        data_list = data_list[:idx0] + \
+                    [data_list[idx0]] * 9 + \
+                    data_list[idx0:]
+
         if self.pre_filter is not None:
             data_list = [self.pre_filter(d) for d in data_list]
         if self.pre_transform is not None:
-            data_list = [self.pre_transform(d) for d in data_list]        
+            data_list = [self.pre_transform(d) for d in data_list]
         
-        self.save(H_list, self.processed_paths[0])
+        self.save(data_list, self.processed_paths[0])
 
     # Graph attribute stripping
     @staticmethod
@@ -122,7 +130,7 @@ class NHSG(InMemoryDataset):
                 pts5_idx = np.round(np.arange(1, 6) * (len(pts) - 1) / 6).astype(int)
                 pts5 = pts[pts5_idx].astype(np.float32).reshape(-1)
                 pts2_idx = np.round(np.arange(1, 3) * (len(pts) - 1) / 3).astype(int)
-                pts2 = pts[pts2_idx].astype(np.float32).reshape(-1)
+                pts2 = pts[pts2_idx].astype(np.float32)
                 avg_pot = np.float32(ed.pop("avg_potential", 0.5 * (node_pot[u] + node_pot[v])))
                 avg_dos = np.float32(ed.pop("avg_dos", 0.5 * (node_dos[u] + node_dos[v])))
             else:
@@ -140,7 +148,7 @@ class NHSG(InMemoryDataset):
     @staticmethod
     def _pyg_Data_pairs(graph: nx.multigraph):
         """Return a pair of PyG Data objects: (graph, line_graph)."""
-        nx_G = NHSG._process_edge_pts(graph)
+        nx_G = NHSG117K._process_edge_pts(graph)
 
         nx_L = line_graph_undirected(nx_G, with_triplet_features=True)
         if nx_L.number_of_edges() == 0:

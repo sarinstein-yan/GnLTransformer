@@ -5,8 +5,9 @@ import inspect
 from typing import Any, Callable, Dict, Final, List, Optional, Tuple, Union
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor
-from torch.nn import Linear, ModuleList
+from torch.nn import Linear, ModuleList, Parameter, GRUCell
 from tqdm import tqdm
 
 from torch_geometric.data import Data
@@ -21,17 +22,30 @@ from torch_geometric.nn.conv import (
     MessagePassing,
     PNAConv,
     SAGEConv,
+    MFConv,
 )
-from torch_geometric.nn import global_add_pool, global_mean_pool
-from torch_geometric.nn.models import MLP
+from torch_geometric.nn import (
+    aggr,
+    global_add_pool, 
+    Linear,
+    SAGPooling,
+)
+from torch_geometric.nn.models import MLP, NeuralFingerprint, AttentiveFP
 from torch_geometric.nn.models.jumping_knowledge import JumpingKnowledge
 from torch_geometric.nn.resolver import (
     activation_resolver,
     normalization_resolver,
 )
+from torch_geometric.nn.inits import glorot, zeros
 from torch_geometric.typing import Adj, OptTensor
+from torch_geometric.utils import softmax
 from torch_geometric.utils._trim_to_layer import TrimToLayer
 
+from gnl_transformer import (
+    AttentiveGnLConv,
+    # GnLTransformer_Paired,
+    GnLTransformer_Hetero,
+)
 
 __all__ = [
     'GCN',
@@ -42,8 +56,11 @@ __all__ = [
     'PNA',
     'EdgeCNN',
     'BasicGNN',
-    'GNNBaselines',
-    'get_model_instance',
+    'BasicGNNBaselines',
+    'MF',
+    'AFP',
+    'GnLTransformer_ablation',
+    'GnLTransformer',
 ]
 
 
@@ -730,21 +747,25 @@ class EdgeCNN(BasicGNN):
         return EdgeConv(mlp, **kwargs)
 
 
-class GNNBaselines(torch.nn.Module):
+class BasicGNNBaselines(torch.nn.Module):
     def __init__(self, base, dim_in, dim_h_conv, dim_h_lin, dim_out,
                  num_layers_conv, num_layers_lin, dropout=0., **kwargs):
         super().__init__()
         self.baseline = base(
             in_channels=dim_in, hidden_channels=dim_h_conv,
             num_layers=num_layers_conv, out_channels=dim_h_conv, 
-            dropout=dropout, **kwargs)
-        self.mlp = MLP(
-            in_channels=dim_h_conv, hidden_channels=dim_h_lin,
+            dropout=dropout, **kwargs
+        )
+        self.mlp = MLP(in_channels=dim_h_conv, hidden_channels=dim_h_lin,
             out_channels=dim_out, num_layers=num_layers_lin, dropout=dropout)
     
     def forward(self, batch):
-        x, edge_index, edge_attr, batch = batch.x, batch.edge_index, batch.edge_attr, batch.batch
+        # x, edge_index, edge_attr, batch = batch.x, batch.edge_index, batch.edge_attr, batch.batch
+        x = batch.x_dict['node']
+        edge_index = batch.edge_index_dict[('node', 'n2n', 'node')]
+        edge_attr = batch.edge_attr_dict[('node', 'n2n', 'node')]
         edge_weight = edge_attr[:, 0]
+        batch = batch.batch_dict['node']
 
         h = self.baseline(x=x, edge_index=edge_index,
                           edge_weight=edge_weight, edge_attr=edge_attr)
@@ -756,35 +777,341 @@ class GNNBaselines(torch.nn.Module):
         return x
 
 
-def get_model_instance(model_name, dim_in, dim_h_gnn, dim_h_mlp, dim_out,
-                      num_layers_gnn, num_layers_mlp, dropout=0., num_heads=1):
-    """Get model instance based on name."""
-    if model_name == 'gcn':
-        model = GNNBaselines(GCN, 
-            dim_in, dim_h_gnn, dim_h_mlp, dim_out,
-            num_layers_gnn, num_layers_mlp, dropout=dropout)
-    elif model_name == 'sage':
-        model = GNNBaselines(GraphSAGE, 
-            dim_in, dim_h_gnn, dim_h_mlp, dim_out,
-            num_layers_gnn, num_layers_mlp, dropout=dropout)
-    elif model_name == 'gat':
-        model = GNNBaselines(GAT, 
-            dim_in, dim_h_gnn, dim_h_mlp, dim_out,
-            num_layers_gnn, num_layers_mlp, dropout=dropout,
-            v2=False, heads=num_heads)
-    elif model_name == 'gatv2':
-        model = GNNBaselines(GAT, 
-            dim_in, dim_h_gnn, dim_h_mlp, dim_out,
-            num_layers_gnn, num_layers_mlp, dropout=dropout,
-            v2=True, heads=num_heads)
-    elif model_name == 'gin':
-        model = GNNBaselines(GIN, 
-            dim_in, dim_h_gnn, dim_h_mlp, dim_out,
-            num_layers_gnn, num_layers_mlp, dropout=dropout)
-    elif model_name == 'gine':
-        model = GNNBaselines(GINE, 
-            dim_in, dim_h_gnn, dim_h_mlp, dim_out,
-            num_layers_gnn, num_layers_mlp, dropout=dropout)
-    else:
-        raise ValueError(f"Unknown model: {model_name}")
-    return model
+
+class MF(torch.nn.Module):
+    r"""Adapted from The Neural Fingerprint model in the
+    `"Convolutional Networks on Graphs for Learning Molecular Fingerprints"
+    <https://arxiv.org/abs/1509.09292>`__ paper to generate fingerprints
+    of molecules.
+
+    Args:
+        in_channels (int): Size of each input sample.
+        hidden_channels (int): Size of each hidden sample.
+        out_channels (int): Size of each output fingerprint.
+        num_layers (int): Number of layers.
+        **kwargs (optional): Additional arguments of
+            :class:`torch_geometric.nn.conv.MFConv`.
+    """
+    def __init__(
+        self,
+        dim_in: int,
+        dim_h_conv: int,
+        dim_h_lin: int,
+        dim_out: int,
+        num_layers_conv: int,
+        num_layers_lin: int = 1,
+        dropout: float = 0.,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.dim_in = dim_in
+        self.dim_h_conv = dim_h_conv
+        self.dim_h_lin = dim_h_lin
+        self.dim_out = dim_out
+        self.num_layers_conv = num_layers_conv
+        self.num_layers_lin = num_layers_lin
+
+        self.convs = torch.nn.ModuleList()
+        for i in range(self.num_layers_conv):
+            dim_in = self.dim_in if i == 0 else self.dim_h_conv
+            self.convs.append(MFConv(dim_in, dim_h_conv, **kwargs))
+
+        self.lins = torch.nn.ModuleList()
+        for _ in range(self.num_layers_conv):
+            self.lins.append(Linear(dim_h_conv, dim_out, bias=False))
+        
+        self.mlp = MLP(in_channels=dim_h_conv, hidden_channels=dim_h_lin,
+            out_channels=dim_out, num_layers=num_layers_lin, dropout=dropout)
+
+    def reset_parameters(self):
+        r"""Resets all learnable parameters of the module."""
+        for conv in self.convs:
+            conv.reset_parameters()
+        for lin in self.lins:
+            lin.reset_parameters()
+        self.mlp.reset_parameters()
+
+    def forward(self, batch):
+        x = batch.x_dict['node']
+        edge_index = batch.edge_index_dict[('node', 'n2n', 'node')]
+        batch = batch.batch_dict['node']
+
+        outs = []
+        for conv, lin in zip(self.convs, self.lins):
+            x = conv(x, edge_index).sigmoid()
+            y = lin(x)#.softmax(dim=-1) # use logits to match other baselines
+            outs.append(global_add_pool(y, batch))
+        h = sum(outs)
+
+        return self.mlp(h)
+
+    def __repr__(self) -> str:
+        return (f'{self.__class__.__name__}({self.dim_in}, '
+                f'{self.dim_out}, num_layers={self.num_layers_conv})')
+
+# class MF(torch.nn.Module):
+#     def __init__(self, dim_in_G, dim_h_conv, dim_out, num_layers_conv, dropout=0.):
+#         super().__init__()
+#         self.mf = NeuralFingerprint(
+#             in_channels=dim_in_G, hidden_channels=dim_h_conv,
+#             out_channels=dim_out, num_layers=num_layers_conv)
+
+#     def forward(self, batch):
+#         x = batch.x_dict['node']
+#         edge_index = batch.edge_index_dict[('node', 'n2n', 'node')]
+#         batch = batch.batch_dict['node']
+#         h = self.mf(x=x, edge_index=edge_index, batch=batch)
+#         return h
+
+
+
+class GATEConv(MessagePassing):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        edge_dim: int,
+        dropout: float = 0.0,
+    ):
+        super().__init__(aggr='add', node_dim=0)
+
+        self.dropout = dropout
+
+        self.att_l = Parameter(torch.empty(1, out_channels))
+        self.att_r = Parameter(torch.empty(1, in_channels))
+
+        self.lin1 = Linear(in_channels + edge_dim, out_channels, False)
+        self.lin2 = Linear(out_channels, out_channels, False)
+
+        self.bias = Parameter(torch.empty(out_channels))
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        glorot(self.att_l)
+        glorot(self.att_r)
+        glorot(self.lin1.weight)
+        glorot(self.lin2.weight)
+        zeros(self.bias)
+
+    def forward(self, x: Tensor, edge_index: Adj, edge_attr: Tensor) -> Tensor:
+        # edge_updater_type: (x: Tensor, edge_attr: Tensor)
+        alpha = self.edge_updater(edge_index, x=x, edge_attr=edge_attr)
+
+        # propagate_type: (x: Tensor, alpha: Tensor)
+        out = self.propagate(edge_index, x=x, alpha=alpha)
+        out = out + self.bias
+        return out
+
+    def edge_update(self, x_j: Tensor, x_i: Tensor, edge_attr: Tensor,
+                    index: Tensor, ptr: OptTensor,
+                    size_i: Optional[int]) -> Tensor:
+        x_j = F.leaky_relu_(self.lin1(torch.cat([x_j, edge_attr], dim=-1)))
+        alpha_j = (x_j @ self.att_l.t()).squeeze(-1)
+        alpha_i = (x_i @ self.att_r.t()).squeeze(-1)
+        alpha = alpha_j + alpha_i
+        alpha = F.leaky_relu_(alpha)
+        alpha = softmax(alpha, index, ptr, size_i)
+        alpha = F.dropout(alpha, p=self.dropout, training=self.training)
+        return alpha
+
+    def message(self, x_j: Tensor, alpha: Tensor) -> Tensor:
+        return self.lin2(x_j) * alpha.unsqueeze(-1)
+
+
+class AFP(torch.nn.Module):
+    r"""The Attentive FP model for molecular representation learning from the
+    `"Pushing the Boundaries of Molecular Representation for Drug Discovery
+    with the Graph Attention Mechanism"
+    <https://pubs.acs.org/doi/10.1021/acs.jmedchem.9b00959>`_ paper, based on
+    graph attention mechanisms.
+
+    Args:
+        in_channels (int): Size of each input sample.
+        hidden_channels (int): Hidden node feature dimensionality.
+        out_channels (int): Size of each output sample.
+        edge_dim (int): Edge feature dimensionality.
+        num_layers (int): Number of GNN layers.
+        num_timesteps (int): Number of iterative refinement steps for global
+            readout.
+        dropout (float, optional): Dropout probability. (default: :obj:`0.0`)
+
+    """
+    def __init__(
+        self,
+        dim_in: int,
+        dim_h_conv: int,
+        dim_h_lin: int,
+        dim_out: int,
+        edge_dim: int,
+        num_layers_conv: int,
+        num_layers_lin: int = 1,
+        num_timesteps: int = 1,
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+
+        self.dim_in = dim_in
+        self.dim_h_conv = dim_h_conv
+        self.dim_out = dim_out
+        self.edge_dim = edge_dim
+        self.num_layers_conv = num_layers_conv
+        self.num_timesteps = num_timesteps
+        self.dropout = dropout
+
+        self.lin1 = Linear(dim_in, dim_h_conv)
+
+        self.gate_conv = GATEConv(dim_h_conv, dim_h_conv, edge_dim,
+                                  dropout)
+        self.gru = GRUCell(dim_h_conv, dim_h_conv)
+
+        self.atom_convs = torch.nn.ModuleList()
+        self.atom_grus = torch.nn.ModuleList()
+        for _ in range(num_layers_conv - 1):
+            conv = GATConv(dim_h_conv, dim_h_conv, dropout=dropout,
+                           add_self_loops=False, negative_slope=0.01)
+            self.atom_convs.append(conv)
+            self.atom_grus.append(GRUCell(dim_h_conv, dim_h_conv))
+
+        self.mol_conv = GATConv(dim_h_conv, dim_h_conv,
+                                dropout=dropout, add_self_loops=False,
+                                negative_slope=0.01)
+        self.mol_conv.explain = False  # Cannot explain global pooling.
+        self.mol_gru = GRUCell(dim_h_conv, dim_h_conv)
+
+        self.lin2 = MLP(in_channels=dim_h_conv, hidden_channels=dim_h_lin,
+            out_channels=dim_out, num_layers=num_layers_lin, dropout=dropout)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        r"""Resets all learnable parameters of the module."""
+        self.lin1.reset_parameters()
+        self.gate_conv.reset_parameters()
+        self.gru.reset_parameters()
+        for conv, gru in zip(self.atom_convs, self.atom_grus):
+            conv.reset_parameters()
+            gru.reset_parameters()
+        self.mol_conv.reset_parameters()
+        self.mol_gru.reset_parameters()
+        self.lin2.reset_parameters()
+
+    # def forward(self, x: Tensor, edge_index: Tensor, edge_attr: Tensor,
+    #             batch: Tensor) -> Tensor:
+    def forward(self, batch):
+        """"""  # noqa: D419
+        x = batch.x_dict['node']
+        edge_index = batch.edge_index_dict[('node', 'n2n', 'node')]
+        edge_attr = batch.edge_attr_dict[('node', 'n2n', 'node')]
+        batch = batch.batch_dict['node']
+
+        # Atom Embedding:
+        x = F.leaky_relu_(self.lin1(x))
+
+        h = F.elu_(self.gate_conv(x, edge_index, edge_attr))
+        h = F.dropout(h, p=self.dropout, training=self.training)
+        x = self.gru(h, x).relu_()
+
+        for conv, gru in zip(self.atom_convs, self.atom_grus):
+            h = conv(x, edge_index)
+            h = F.elu(h)
+            h = F.dropout(h, p=self.dropout, training=self.training)
+            x = gru(h, x).relu()
+
+        # Molecule Embedding:
+        row = torch.arange(batch.size(0), device=batch.device)
+        edge_index = torch.stack([row, batch], dim=0)
+
+        out = global_add_pool(x, batch).relu_()
+        for t in range(self.num_timesteps):
+            h = F.elu_(self.mol_conv((x, out), edge_index))
+            h = F.dropout(h, p=self.dropout, training=self.training)
+            out = self.mol_gru(h, out).relu_()
+
+        # Predictor:
+        out = F.dropout(out, p=self.dropout, training=self.training)
+        return self.lin2(out)
+
+    def __repr__(self) -> str:
+        return (f'{self.__class__.__name__}('
+                f'in_channels={self.dim_in}, '
+                f'hidden_channels={self.dim_h_conv}, '
+                f'out_channels={self.dim_out}, '
+                f'edge_dim={self.edge_dim}, '
+                f'num_layers_conv={self.num_layers_conv}, '
+                f'num_timesteps={self.num_timesteps}, '
+                f'num_layers_lin={self.num_layers_lin}, '
+                f')')
+
+# class AFP(torch.nn.Module):
+#     def __init__(self, dim_in_G, dim_in_L, dim_h_conv, dim_out, num_layers_conv, dropout=0.):
+#         super().__init__()
+#         self.afp = AttentiveFP(
+#             in_channels=dim_in_G, hidden_channels=dim_h_conv,
+#             out_channels=dim_out, num_layers=num_layers_conv,
+#             edge_dim=dim_in_L, num_timesteps=3, dropout=dropout)
+
+#     def forward(self, batch):
+#         x = batch.x_dict['node']
+#         edge_index = batch.edge_index_dict[('node', 'n2n', 'node')]
+#         edge_attr = batch.edge_attr_dict[('node', 'n2n', 'node')]
+#         batch = batch.batch_dict['node']
+#         h = self.afp(x=x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+#         return h
+
+
+class GnLTransformer_ablation(torch.nn.Module):
+    def __init__(self, dim_in_G, dim_h_conv, dim_h_lin, dim_out,
+                 num_layer_conv, num_layer_lin, num_heads, pool_k_G, dropout=0.):
+        super().__init__()
+        self.conv_G = AttentiveGnLConv(in_channels=dim_in_G,
+                                hidden_channels=dim_h_conv,
+                                num_layers=num_layer_conv,
+                                num_heads=num_heads,
+                                dropout=dropout)
+        self.pool_G = SAGPooling(dim_h_conv, ratio=pool_k_G)#, GNN=GATv2Conv)
+        self.sort_G = aggr.SortAggregation(k=pool_k_G)
+        self.mlp = MLP(in_channels=dim_h_conv*(pool_k_G),
+                       hidden_channels=dim_h_lin,
+                       out_channels=dim_out,
+                       num_layers=num_layer_lin,
+                       dropout=dropout)
+    
+    def forward(self, batch):
+        x = batch.x_dict['node']
+        edge_index = batch.edge_index_dict[('node', 'n2n', 'node')]
+        edge_attr = batch.edge_attr_dict[('node', 'n2n', 'node')]
+        batch = batch.batch_dict['node']
+
+        h = self.conv_G(x=x, edge_index=edge_index, edge_attr=edge_attr)
+        h, edge_index, edge_attr, batch, _, _ = self.pool_G(
+            x=h, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+        h = self.sort_G(x=h, batch=batch)
+        x = self.mlp(x=h)
+
+        return x
+
+
+class GnLTransformer(GnLTransformer_Hetero):
+    def forward(self, batch):
+        x_G, edge_index_G, edge_attr_G, batch_G = \
+            batch.x_dict['node'], batch.edge_index_dict[('node', 'n2n', 'node')], \
+                batch.edge_attr_dict[('node', 'n2n', 'node')], batch.batch_dict['node']
+        x_L, edge_index_L, edge_attr_L, batch_L = \
+            batch.x_dict['edge'], batch.edge_index_dict[('edge', 'e2e', 'edge')], \
+                batch.edge_attr_dict[('edge', 'e2e', 'edge')], batch.batch_dict['edge']
+
+        x_G = self.conv_G(x_G, edge_index_G, edge_attr_G)
+        x_L = self.conv_L(x_L, edge_index_L, edge_attr_L)
+
+        x_G, _, _, batch_G, _, _ = self.pool_G(x_G, edge_index_G, edge_attr_G, batch_G)
+        x_L, _, _, batch_L, _, _ = self.pool_L(x_L, edge_index_L, edge_attr_L, batch_L)
+
+        x_G = self.sort_G(x_G, batch_G)
+        x_L = self.sort_L(x_L, batch_L)
+
+        x = torch.cat([x_G, x_L], dim=1)
+        x = self.mlp(x)
+
+        return x

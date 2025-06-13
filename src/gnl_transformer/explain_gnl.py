@@ -112,13 +112,13 @@ class ExplanationSummary():
         if isinstance(layer, int):
             if layer > self.model.num_layer_conv or layer < 2:
                 raise ValueError(f'Layer must be an int between 2 and {self.model.num_layer_conv}.')
-            edge_att_G = self.embeddings['G_node'][f'att_w_conv{layer}']
-            edge_att_L = self.embeddings['L_node'][f'att_w_conv{layer}']
+            edge_att_G = self.embeddings['G_node'][f'att_w_conv_{layer}']
+            edge_att_L = self.embeddings['L_node'][f'att_w_conv_{layer}']
             return edge_att_G.ravel(), edge_att_L.ravel()
         elif layer == 'all':
             layer = range(2, self.model.num_layer_conv+1)
-        edge_att_G = np.hstack([self.embeddings['G_node'][f'att_w_conv{i}'] for i in layer])
-        edge_att_L = np.hstack([self.embeddings['L_node'][f'att_w_conv{i}'] for i in layer])
+        edge_att_G = np.hstack([self.embeddings['G_node'][f'att_w_conv_{i}'] for i in layer])
+        edge_att_L = np.hstack([self.embeddings['L_node'][f'att_w_conv_{i}'] for i in layer])
         return edge_att_G.sum(-1), edge_att_L.sum(-1)
 
     def _get_node_attention(self,
@@ -140,16 +140,16 @@ class ExplanationSummary():
             emb = [self.pygG.x.numpy()]
             emb_labels = ['Input, G']
             for i in range(1, self.model.num_layer_conv+1):
-                emb.append(self.embeddings['G_node'][f'x_conv{i}'])
-                emb.append(self.embeddings['G_node'][f'x_gru{i}'])
+                emb.append(self.embeddings['G_node'][f'x_conv_{i}'])
+                emb.append(self.embeddings['G_node'][f'x_gru_{i}'])
                 emb_labels.extend([f'Conv, Layer {i}, G', f'GRU, Layer {i}, G'])
             return emb, emb_labels
         elif not is_G or is_G == 'L':
             emb = [self.pygL.x.numpy()]
             emb_labels = ['Input, L']
             for i in range(1, self.model.num_layer_conv+1):
-                emb.append(self.embeddings['L_node'][f'x_conv{i}'])
-                emb.append(self.embeddings['L_node'][f'x_gru{i}'])
+                emb.append(self.embeddings['L_node'][f'x_conv_{i}'])
+                emb.append(self.embeddings['L_node'][f'x_gru_{i}'])
                 emb_labels.extend([f'Conv, Layer {i}, L', f'GRU, Layer {i}, L'])
             return emb, emb_labels
         else:
@@ -160,9 +160,9 @@ class ExplanationSummary():
         if idx is not None: self(idx)
         if self.embeddings is None:
             raise ValueError('Embeddings not found. Call get_data() before calling this method.')
-        emb_convG = self.embeddings['G_graph1']
-        emb_convL = self.embeddings['L_graph1']
-        emb_last = self.embeddings['GnL_graph-1']
+        emb_convG = self.embeddings['G_graph_1']
+        emb_convL = self.embeddings['L_graph_1']
+        emb_last = self.embeddings['GnL_graph_-1']
         return emb_convG, emb_convL, emb_last
     
     def to_networkx_Graph(self, head='all', layer='all', create_using=nx.Graph):
