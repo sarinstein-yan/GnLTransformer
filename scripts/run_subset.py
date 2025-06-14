@@ -52,22 +52,27 @@ shared_hps = {
     "num_layers_lin": 2,
     "dropout": 0.,
 }
+
 gcn = M.BasicGNNBaselines(
     M.GCN, **shared_hps,
     dim_h_conv=480, dim_h_lin=950,
 )
+
 gin = M.BasicGNNBaselines(
     M.GIN, **shared_hps,
     dim_h_conv=350, dim_h_lin=700,
 )
+
 gine = M.BasicGNNBaselines(
     M.GINE, **shared_hps,
     dim_h_conv=350, dim_h_lin=700,
 )
+
 gat = M.BasicGNNBaselines(
     M.GAT, **shared_hps,
     dim_h_conv=460, dim_h_lin=920,
 )
+
 gatv2 = M.BasicGNNBaselines(
     M.GAT, **shared_hps,
     v2=True,
@@ -75,9 +80,11 @@ gatv2 = M.BasicGNNBaselines(
 )
 gatv2.alias = "GATv2"
 gatv2.hps['alias'] = "GATv2"
+
 mf = M.MF(**shared_hps,
     dim_h_conv=125, dim_h_lin=250,
 )
+
 afp = M.AFP(**shared_hps, 
     edge_dim=11, 
     num_timesteps=2,
