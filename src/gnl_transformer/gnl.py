@@ -141,9 +141,9 @@ class GnLTransformer_Paired(torch.nn.Module):
         dim_h_conv (int): Hidden dimension for the `AttentiveGnLConv` layers.
         dim_h_lin (int): Hidden dimension for the final MLP layers.
         dim_out (int): The final output dimension of the model.
-        num_layer_conv (int): The number of layers in each `AttentiveGnLConv`
+        num_layers_conv (int): The number of layers in each `AttentiveGnLConv`
             module.
-        num_layer_lin (int): The number of layers in the final MLP.
+        num_layers_lin (int): The number of layers in the final MLP.
         num_heads (int, optional): The number of attention heads in the
             convolutional layers. Defaults to 4.
         pool_k_G (int, optional): The number of nodes to keep for graph G after
@@ -159,8 +159,8 @@ class GnLTransformer_Paired(torch.nn.Module):
         dim_h_conv: int,
         dim_h_lin: int,
         dim_out: int,
-        num_layer_conv: int, 
-        num_layer_lin: int,
+        num_layers_conv: int, 
+        num_layers_lin: int,
         num_heads: Optional[int] = 4,
         pool_k_G: Optional[int] = 30,
         pool_k_L: Optional[int] = 30,
@@ -168,15 +168,32 @@ class GnLTransformer_Paired(torch.nn.Module):
         edge_dim_L: Optional[Union[int, float]] = -1,
     ):
         super().__init__()
+        
+        self.hps = {
+            'alias': 'GnLTransformer',
+            'dim_in_G': dim_in_G,
+            'dim_in_L': dim_in_L,
+            'dim_h_conv': dim_h_conv,
+            'dim_h_lin': dim_h_lin,
+            'dim_out': dim_out,
+            'num_layers_conv': num_layers_conv,
+            'num_layers_lin': num_layers_lin,
+            'num_heads': num_heads,
+            'pool_k_G': pool_k_G,
+            'pool_k_L': pool_k_L,
+            'dropout': dropout,
+        }
+        [setattr(self, k, v) for k, v in self.hps.items()]
+
         self.conv_G = AttentiveGnLConv(in_channels=dim_in_G,
                                 hidden_channels=dim_h_conv,
-                                num_layers=num_layer_conv,
+                                num_layers=num_layers_conv,
                                 num_heads=num_heads,
                                 dropout=dropout,
                                 edge_dim=dim_in_L)
         self.conv_L = AttentiveGnLConv(in_channels=dim_in_L,
                                 hidden_channels=dim_h_conv,
-                                num_layers=num_layer_conv,
+                                num_layers=num_layers_conv,
                                 num_heads=num_heads,
                                 dropout=dropout,
                                 edge_dim=edge_dim_L)
@@ -189,23 +206,8 @@ class GnLTransformer_Paired(torch.nn.Module):
         self.mlp = MLP(in_channels=dim_h_conv*(pool_k_G+pool_k_L),
                        hidden_channels=dim_h_lin,
                        out_channels=dim_out,
-                       num_layers=num_layer_lin,
+                       num_layers=num_layers_lin,
                        dropout=dropout)
-        
-        self.hps = {
-            'dim_in_G': dim_in_G,
-            'dim_in_L': dim_in_L,
-            'dim_h_conv': dim_h_conv,
-            'dim_h_lin': dim_h_lin,
-            'dim_out': dim_out,
-            'num_layer_conv': num_layer_conv,
-            'num_layer_lin': num_layer_lin,
-            'num_heads': num_heads,
-            'pool_k_G': pool_k_G,
-            'pool_k_L': pool_k_L,
-            'dropout': dropout,
-        }
-        [setattr(self, k, v) for k, v in self.hps.items()]
 
         self.reset_parameters()
 
@@ -253,8 +255,8 @@ class GnLTransformer_Paired(torch.nn.Module):
                 f'[({self.dim_in_G}, {self.dim_in_L}), {self.dim_out}], '
                 f'dim_h_conv={self.dim_h_conv}, '
                 f'dim_h_lin={self.dim_h_lin}, '
-                f'num_layer_conv={self.num_layer_conv}, '
-                f'num_layer_lin={self.num_layer_lin}, '
+                f'num_layers_conv={self.num_layers_conv}, '
+                f'num_layers_lin={self.num_layers_lin}, '
                 f'num_heads={self.num_heads}, '
                 f'pool_k=({self.pool_k_G}, {self.pool_k_L}), '
                 f')')
@@ -278,9 +280,9 @@ class GnLTransformer_Hetero(GnLTransformer_Paired):
         dim_h_conv (int): Hidden dimension for the `AttentiveGnLConv` layers.
         dim_h_lin (int): Hidden dimension for the final MLP layers.
         dim_out (int): The final output dimension of the model.
-        num_layer_conv (int): The number of layers in each `AttentiveGnLConv`
+        num_layers_conv (int): The number of layers in each `AttentiveGnLConv`
             module.
-        num_layer_lin (int): The number of layers in the final MLP.
+        num_layers_lin (int): The number of layers in the final MLP.
         num_heads (int, optional): The number of attention heads. Defaults to 4.
         pool_k_G (int, optional): The number of 'node' type nodes to keep after
             pooling. Defaults to 30.
@@ -413,19 +415,19 @@ class XGnLTransformer_Paired(GnLTransformer_Paired):
         dim_h_conv (int): Hidden dimension for the `XAGnLConv` layers.
         dim_h_lin (int): Hidden dimension for the MLP layers.
         dim_out (int): Output dimension of the model.
-        num_layer_conv (int): Number of `XAGnLConv` layers per channel.
-        num_layer_lin (int): Number of layers in the final MLP.
+        num_layers_conv (int): Number of `XAGnLConv` layers per channel.
+        num_layers_lin (int): Number of layers in the final MLP.
         num_heads (int): Number of attention heads.
         pool_k_G (int): Number of nodes to keep for graph G after pooling.
         pool_k_L (int): Number of nodes to keep for graph L after pooling.
         dropout (float, optional): Dropout rate. Defaults to 0.0.    
     """
     def __init__(self, dim_in_G, dim_in_L, dim_h_conv, dim_h_lin, dim_out, 
-            num_layer_conv, num_layer_lin, num_heads, pool_k_G, pool_k_L, dropout=0.):
+            num_layers_conv, num_layers_lin, num_heads, pool_k_G, pool_k_L, dropout=0.):
         super().__init__(dim_in_G, dim_in_L, dim_h_conv, dim_h_lin, dim_out, 
-                num_layer_conv, num_layer_lin, num_heads, pool_k_G, pool_k_L, dropout)
-        self.conv_G = XAGnLConv(dim_in_G, dim_h_conv, num_layer_conv, num_heads, dropout)
-        self.conv_L = XAGnLConv(dim_in_L, dim_h_conv, num_layer_conv, num_heads, dropout)
+                num_layers_conv, num_layers_lin, num_heads, pool_k_G, pool_k_L, dropout)
+        self.conv_G = XAGnLConv(dim_in_G, dim_h_conv, num_layers_conv, num_heads, dropout)
+        self.conv_L = XAGnLConv(dim_in_L, dim_h_conv, num_layers_conv, num_heads, dropout)
     
     def forward(self, data_G, data_L):
         """
@@ -493,8 +495,8 @@ class XGnLTransformer_Hetero(GnLTransformer_Hetero):
         dim_h_conv (int): Hidden dimension for the XAGnLConv layers.
         dim_h_lin (int): Hidden dimension for the linear layers (e.g., in the MLP).
         dim_out (int): Output dimension of the model.
-        num_layer_conv (int): Number of XAGnLConv layers for each branch (G and L).
-        num_layer_lin (int): Number of linear layers in the final MLP.
+        num_layers_conv (int): Number of XAGnLConv layers for each branch (G and L).
+        num_layers_lin (int): Number of linear layers in the final MLP.
         num_heads (int): Number of attention heads in the XAGnLConv layers.
         pool_k_G (float or int): Pooling ratio or number of nodes to keep after
                              convolution for graph G.

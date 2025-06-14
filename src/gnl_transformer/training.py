@@ -42,7 +42,7 @@ from gnl_transformer import NHSG117K
 # DataModule
 # ---------------------------------------------------------------------------
 class NHSG117K_Lit(pl.LightningDataModule):
-    def __init__(self, root, batch_size, seeds, subset_ratio = None):
+    def __init__(self, root, batch_size, seeds = [42], subset_ratio = None):
         super().__init__()
         self.root = root
         self.batch_size = batch_size
@@ -54,48 +54,56 @@ class NHSG117K_Lit(pl.LightningDataModule):
         _ = NHSG117K(self.root)
 
     def setup(self, stage=None):
+        # self.dataset and self.y will hold the full dataset
+        self.dataset = NHSG117K(self.root)
+        y_all_full = self.dataset._data.y.numpy()
+        self.y = torch.tensor(y_all_full)
+
+        # Initialize lists for splits and the new seed-specific subsets
         self.splits = []
-        full_dataset = NHSG117K(self.root)
-        y_all_full = full_dataset._data.y.numpy()
-
-        # If a subset_ratio is given, downsample the dataset before splitting
-        if self.subset_ratio is not None:
-            np.random.seed(42)  # for reproducible downsampling
-            final_indices = []
-            classes, counts = np.unique(y_all_full, return_counts=True)
-
-            for cls, count in zip(classes, counts):
-                class_indices = np.where(y_all_full == cls)[0]
-                
-                # If class size > 100, downsample it
-                if count > 100:
-                    num_to_sample = int(count * self.subset_ratio)
-                    sampled_indices = np.random.choice(
-                        class_indices, num_to_sample, replace=False
-                    )
-                    final_indices.extend(sampled_indices)
-                else:
-                    # Otherwise, keep all samples from that class
-                    final_indices.extend(class_indices)
-            
-            # The working dataset is a subset of the full one
-            self.dataset = Subset(full_dataset, sorted(final_indices))
-            y_all = y_all_full[sorted(final_indices)]
-        else:
-            # Otherwise, use the full dataset
-            self.dataset = full_dataset
-            y_all = y_all_full
-
-        self.y = torch.tensor(y_all)
+        self.subset_indices = []
+        self.subsets = []
+        self.y_subsets = []
 
         for seed in self.seeds:
-            # 1) train/test
+            # If downsampling, create a unique subset for the current seed
+            if self.subset_ratio is not None:
+                rng = np.random.RandomState(seed)
+                
+                final_indices = []
+                classes, counts = np.unique(y_all_full, return_counts=True)
+
+                for cls, count in zip(classes, counts):
+                    class_indices = np.where(y_all_full == cls)[0]
+                    
+                    if count > 100:
+                        num_to_sample = int(count * self.subset_ratio)
+                        sampled_indices = rng.choice(
+                            class_indices, num_to_sample, replace=False
+                        )
+                        final_indices.extend(sampled_indices)
+                    else:
+                        final_indices.extend(class_indices)
+                
+                sorted_indices = sorted(final_indices)
+                # This is the dataset to be used for splitting in this iteration
+                dataset_for_split = Subset(self.dataset, sorted_indices)
+                y_for_split = y_all_full[sorted_indices]
+                
+                self.subset_indices.append(sorted_indices)
+                self.subsets.append(dataset_for_split)
+                self.y_subsets.append(y_for_split)
+            else:
+                # If not downsampling, use the full dataset for splitting
+                dataset_for_split = self.dataset
+                y_for_split = y_all_full
+
+            # 1) train/test split on the dataset for the current seed
             splitter = StratifiedShuffleSplit(
                 n_splits=1, train_size=0.8, test_size=0.2, random_state=seed
             )
-            # Generate indices relative to the (potentially downsampled) dataset
-            idx_train, idx_tmp = next(splitter.split(np.zeros_like(y_all), y_all))
-            y_tmp = y_all[idx_tmp]
+            idx_train, idx_tmp = next(splitter.split(np.zeros_like(y_for_split), y_for_split))
+            y_tmp = y_for_split[idx_tmp]
 
             # 2) decide whether to stratify val/test
             #    if any class has fewer than 2 samples → fallback 
@@ -116,11 +124,12 @@ class NHSG117K_Lit(pl.LightningDataModule):
                 ))
                 idx_val = idx_tmp[rel_val]
                 idx_test = idx_tmp[rel_test]
-
+            
+            # The final splits are Subsets of the seed-specific dataset (`dataset_for_split`)
             self.splits.append((
-                Subset(self.dataset, idx_train),
-                Subset(self.dataset, idx_val),
-                Subset(self.dataset, idx_test),
+                Subset(dataset_for_split, idx_train),
+                Subset(dataset_for_split, idx_val),
+                Subset(dataset_for_split, idx_test),
             ))
 
     def train_dataloader(self, seed_idx=0):
@@ -140,7 +149,6 @@ class LitGNN(pl.LightningModule):
         super().__init__()
 
         self.model = model
-        self.save_hyperparameters({"model": self.model.__class__.__name__})
         self.save_hyperparameters(model.hps)
         self.save_hyperparameters(train_hp)
 
@@ -281,7 +289,7 @@ def run_experiment(model, train_hp):
     )
     dm.prepare_data(); dm.setup()
 
-    model_name = model.__class__.__name__.lower()
+    model_name = model.hps['alias'].lower()
     print(f"\n🧠  ▶ Training {model_name} …")
     summaries = []
 

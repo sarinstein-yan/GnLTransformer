@@ -751,16 +751,8 @@ class BasicGNNBaselines(torch.nn.Module):
     def __init__(self, base, dim_in, dim_h_conv, dim_h_lin, dim_out,
                  num_layers_conv, num_layers_lin, dropout=0., **kwargs):
         super().__init__()
-        
-        self.baseline = base(
-            in_channels=dim_in, hidden_channels=dim_h_conv,
-            num_layers=num_layers_conv, out_channels=dim_h_conv, 
-            dropout=dropout, **kwargs
-        )
-        self.mlp = MLP(in_channels=dim_h_conv, hidden_channels=dim_h_lin,
-            out_channels=dim_out, num_layers=num_layers_lin, dropout=dropout)
-        
         self.hps = {
+            'alias': base.__name__,
             'dim_in': dim_in,
             'dim_h_conv': dim_h_conv,
             'dim_h_lin': dim_h_lin,
@@ -769,6 +761,15 @@ class BasicGNNBaselines(torch.nn.Module):
             'num_layers_lin': num_layers_lin,
             'dropout': dropout,
         }
+        [setattr(self, k, v) for k, v in self.hps.items()]
+        
+        self.baseline = base(
+            in_channels=dim_in, hidden_channels=dim_h_conv,
+            num_layers=num_layers_conv, out_channels=dim_h_conv, 
+            dropout=dropout, **kwargs
+        )
+        self.mlp = MLP(in_channels=dim_h_conv, hidden_channels=dim_h_lin,
+            out_channels=dim_out, num_layers=num_layers_lin, dropout=dropout)
     
     def forward(self, batch):
         # x, edge_index, edge_attr, batch = batch.x, batch.edge_index, batch.edge_attr, batch.batch
@@ -815,19 +816,8 @@ class MF(torch.nn.Module):
     ):
         super().__init__()
 
-        self.convs = torch.nn.ModuleList()
-        for i in range(self.num_layers_conv):
-            dim_in = self.dim_in if i == 0 else self.dim_h_conv
-            self.convs.append(MFConv(dim_in, dim_h_conv, **kwargs))
-
-        self.lins = torch.nn.ModuleList()
-        for _ in range(self.num_layers_conv):
-            self.lins.append(Linear(dim_h_conv, dim_out, bias=False))
-        
-        self.mlp = MLP(in_channels=dim_h_conv, hidden_channels=dim_h_lin,
-            out_channels=dim_out, num_layers=num_layers_lin, dropout=dropout)
-
         self.hps = {
+            'alias': 'NeuralFingerprint',
             'dim_in': dim_in,
             'dim_h_conv': dim_h_conv,
             'dim_h_lin': dim_h_lin,
@@ -837,6 +827,19 @@ class MF(torch.nn.Module):
             'dropout': dropout,
         }
         [setattr(self, k, v) for k, v in self.hps.items()]
+
+        self.convs = torch.nn.ModuleList()
+        for i in range(self.num_layers_conv):
+            dim_in = self.dim_in if i == 0 else self.dim_h_conv
+            self.convs.append(MFConv(dim_in, dim_h_conv, **kwargs))
+
+        self.lins = torch.nn.ModuleList()
+        for _ in range(self.num_layers_conv):
+            self.lins.append(Linear(dim_h_conv, dim_h_conv, bias=False))
+        
+        self.mlp = MLP(in_channels=dim_h_conv, hidden_channels=dim_h_lin,
+            out_channels=dim_out, num_layers=num_layers_lin, dropout=dropout)
+
 
     def reset_parameters(self):
         r"""Resets all learnable parameters of the module."""
@@ -966,6 +969,20 @@ class AFP(torch.nn.Module):
     ):
         super().__init__()
 
+        self.hps = {
+            'alias': 'AttentiveFP',
+            'dim_in': dim_in,
+            'dim_h_conv': dim_h_conv,
+            'dim_h_lin': dim_h_lin,
+            'dim_out': dim_out,
+            'num_layers_conv': num_layers_conv,
+            'num_layers_lin': num_layers_lin,
+            'dropout': dropout,
+            'edge_dim': edge_dim,
+            'num_timesteps': num_timesteps,
+        }
+        [setattr(self, k, v) for k, v in self.hps.items()]
+
         self.lin1 = Linear(dim_in, dim_h_conv)
 
         self.gate_conv = GATEConv(dim_h_conv, dim_h_conv, edge_dim,
@@ -989,18 +1006,6 @@ class AFP(torch.nn.Module):
         self.lin2 = MLP(in_channels=dim_h_conv, hidden_channels=dim_h_lin,
             out_channels=dim_out, num_layers=num_layers_lin, dropout=dropout)
         
-        self.hps = {
-            'dim_in': dim_in,
-            'dim_h_conv': dim_h_conv,
-            'dim_h_lin': dim_h_lin,
-            'dim_out': dim_out,
-            'num_layers_conv': num_layers_conv,
-            'num_layers_lin': num_layers_lin,
-            'dropout': dropout,
-            'edge_dim': edge_dim,
-            'num_timesteps': num_timesteps,
-        }
-        [setattr(self, k, v) for k, v in self.hps.items()]
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -1092,19 +1097,19 @@ class GnLTransformer_ablation(torch.nn.Module):
         dim_h_conv (int): Hidden dimension for the `AttentiveGnLConv` layers.
         dim_h_lin (int): Hidden dimension for the MLP layers.
         dim_out (int): The final output dimension of the model.
-        num_layer_conv (int): The number of layers in `AttentiveGnLConv`.
-        num_layer_lin (int): The number of layers in the final MLP.
+        num_layers_conv (int): The number of layers in `AttentiveGnLConv`.
+        num_layers_lin (int): The number of layers in the final MLP.
         num_heads (int): The number of attention heads.
         pool_k_G (int): The number of nodes to keep after pooling.
         dropout (float, optional): Dropout probability. Defaults to 0.0.
     """
     def __init__(self, dim_in_G, dim_h_conv, dim_h_lin, dim_out,
-                 num_layer_conv, num_layer_lin, num_heads, pool_k_G, dropout=0.):
+                 num_layers_conv, num_layers_lin, num_heads, pool_k_G, dropout=0.):
         super().__init__()
         self.conv_G = AttentiveGnLConv(
             in_channels=dim_in_G,
             hidden_channels=dim_h_conv,
-            num_layers=num_layer_conv,
+            num_layers=num_layers_conv,
             num_heads=num_heads,
             dropout=dropout
         )
@@ -1114,17 +1119,18 @@ class GnLTransformer_ablation(torch.nn.Module):
             in_channels=dim_h_conv * pool_k_G,
             hidden_channels=dim_h_lin,
             out_channels=dim_out,
-            num_layers=num_layer_lin,
+            num_layers=num_layers_lin,
             dropout=dropout
         )
 
         self.hps = {
+            'alias': 'GnLTransformer_ablation',
             'dim_in_G': dim_in_G,
             'dim_h_conv': dim_h_conv,
             'dim_h_lin': dim_h_lin,
             'dim_out': dim_out,
-            'num_layer_conv': num_layer_conv,
-            'num_layer_lin': num_layer_lin,
+            'num_layers_conv': num_layers_conv,
+            'num_layers_lin': num_layers_lin,
             'num_heads': num_heads,
             'dropout': dropout,
             'pool_k_G': pool_k_G,
@@ -1146,11 +1152,11 @@ class GnLTransformer_ablation(torch.nn.Module):
         edge_attr = batch.edge_attr_dict[('node', 'n2n', 'node')]
         batch_idx = batch.batch_dict['node']
 
-        h = self.conv_G(x=x, edge_index=edge_index, edge_attr=edge_attr)
-        h, edge_index, edge_attr, batch_idx, _, _ = self.pool_G(
-            x=h, edge_index=edge_index, edge_attr=edge_attr, batch=batch_idx)
-        h = self.sort_G(x=h, batch=batch_idx)
-        x = self.mlp(x=h)
+        h = self.conv_G(x, edge_index, edge_attr)
+        h, edge_index, edge_attr, batch_idx, _, _ = \
+            self.pool_G(h, edge_index, edge_attr, batch_idx)
+        h = self.sort_G(h, batch_idx)
+        x = self.mlp(h)
 
         return x
 
@@ -1160,8 +1166,8 @@ class GnLTransformer_ablation(torch.nn.Module):
                 f"dim_h_conv={self.dim_h_conv}, "
                 f"dim_h_lin={self.dim_h_lin}, "
                 f"dim_out={self.dim_out}, "
-                f"num_layer_conv={self.num_layer_conv}, "
-                f"num_layer_lin={self.num_layer_lin}, "
+                f"num_layers_conv={self.num_layers_conv}, "
+                f"num_layers_lin={self.num_layers_lin}, "
                 f"num_heads={self.num_heads}, "
                 f"pool_k_G={self.pool_k_G}, "
         )
@@ -1184,9 +1190,9 @@ class GnLTransformer(GnLTransformer_Hetero):
         dim_h_conv (int): Hidden dimension for the `AttentiveGnLConv` layers.
         dim_h_lin (int): Hidden dimension for the final MLP layers.
         dim_out (int): The final output dimension of the model.
-        num_layer_conv (int): The number of layers in each `AttentiveGnLConv`
+        num_layers_conv (int): The number of layers in each `AttentiveGnLConv`
             module.
-        num_layer_lin (int): The number of layers in the final MLP.
+        num_layers_lin (int): The number of layers in the final MLP.
         num_heads (int, optional): The number of attention heads. Defaults to 4.
         pool_k_G (int, optional): The number of 'node' type nodes to keep after
             pooling. Defaults to 30.
