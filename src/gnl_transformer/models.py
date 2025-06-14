@@ -751,6 +751,7 @@ class BasicGNNBaselines(torch.nn.Module):
     def __init__(self, base, dim_in, dim_h_conv, dim_h_lin, dim_out,
                  num_layers_conv, num_layers_lin, dropout=0., **kwargs):
         super().__init__()
+        
         self.baseline = base(
             in_channels=dim_in, hidden_channels=dim_h_conv,
             num_layers=num_layers_conv, out_channels=dim_h_conv, 
@@ -758,6 +759,16 @@ class BasicGNNBaselines(torch.nn.Module):
         )
         self.mlp = MLP(in_channels=dim_h_conv, hidden_channels=dim_h_lin,
             out_channels=dim_out, num_layers=num_layers_lin, dropout=dropout)
+        
+        self.hps = {
+            'dim_in': dim_in,
+            'dim_h_conv': dim_h_conv,
+            'dim_h_lin': dim_h_lin,
+            'dim_out': dim_out,
+            'num_layers_conv': num_layers_conv,
+            'num_layers_lin': num_layers_lin,
+            'dropout': dropout,
+        }
     
     def forward(self, batch):
         # x, edge_index, edge_attr, batch = batch.x, batch.edge_index, batch.edge_attr, batch.batch
@@ -775,7 +786,6 @@ class BasicGNNBaselines(torch.nn.Module):
         x = self.mlp(h)
         
         return x
-
 
 
 class MF(torch.nn.Module):
@@ -805,13 +815,6 @@ class MF(torch.nn.Module):
     ):
         super().__init__()
 
-        self.dim_in = dim_in
-        self.dim_h_conv = dim_h_conv
-        self.dim_h_lin = dim_h_lin
-        self.dim_out = dim_out
-        self.num_layers_conv = num_layers_conv
-        self.num_layers_lin = num_layers_lin
-
         self.convs = torch.nn.ModuleList()
         for i in range(self.num_layers_conv):
             dim_in = self.dim_in if i == 0 else self.dim_h_conv
@@ -823,6 +826,17 @@ class MF(torch.nn.Module):
         
         self.mlp = MLP(in_channels=dim_h_conv, hidden_channels=dim_h_lin,
             out_channels=dim_out, num_layers=num_layers_lin, dropout=dropout)
+
+        self.hps = {
+            'dim_in': dim_in,
+            'dim_h_conv': dim_h_conv,
+            'dim_h_lin': dim_h_lin,
+            'dim_out': dim_out,
+            'num_layers_conv': num_layers_conv,
+            'num_layers_lin': num_layers_lin,
+            'dropout': dropout,
+        }
+        [setattr(self, k, v) for k, v in self.hps.items()]
 
     def reset_parameters(self):
         r"""Resets all learnable parameters of the module."""
@@ -952,14 +966,6 @@ class AFP(torch.nn.Module):
     ):
         super().__init__()
 
-        self.dim_in = dim_in
-        self.dim_h_conv = dim_h_conv
-        self.dim_out = dim_out
-        self.edge_dim = edge_dim
-        self.num_layers_conv = num_layers_conv
-        self.num_timesteps = num_timesteps
-        self.dropout = dropout
-
         self.lin1 = Linear(dim_in, dim_h_conv)
 
         self.gate_conv = GATEConv(dim_h_conv, dim_h_conv, edge_dim,
@@ -982,7 +988,19 @@ class AFP(torch.nn.Module):
 
         self.lin2 = MLP(in_channels=dim_h_conv, hidden_channels=dim_h_lin,
             out_channels=dim_out, num_layers=num_layers_lin, dropout=dropout)
-
+        
+        self.hps = {
+            'dim_in': dim_in,
+            'dim_h_conv': dim_h_conv,
+            'dim_h_lin': dim_h_lin,
+            'dim_out': dim_out,
+            'num_layers_conv': num_layers_conv,
+            'num_layers_lin': num_layers_lin,
+            'dropout': dropout,
+            'edge_dim': edge_dim,
+            'num_timesteps': num_timesteps,
+        }
+        [setattr(self, k, v) for k, v in self.hps.items()]
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -1062,45 +1080,142 @@ class AFP(torch.nn.Module):
 
 
 class GnLTransformer_ablation(torch.nn.Module):
+    """An ablation model of the GnLTransformer with only the graph channel.
+
+    This model serves as an ablation study for the `GnLTransformer`. It removes
+    the line-graph processing channel entirely. The architecture consists of a
+    single `AttentiveGnLConv` stream for the primary graph, followed by
+    `SAGPooling`, `SortAggregation`, and a final MLP for prediction.
+
+    Args:
+        dim_in_G (int): Input feature dimension for graph nodes.
+        dim_h_conv (int): Hidden dimension for the `AttentiveGnLConv` layers.
+        dim_h_lin (int): Hidden dimension for the MLP layers.
+        dim_out (int): The final output dimension of the model.
+        num_layer_conv (int): The number of layers in `AttentiveGnLConv`.
+        num_layer_lin (int): The number of layers in the final MLP.
+        num_heads (int): The number of attention heads.
+        pool_k_G (int): The number of nodes to keep after pooling.
+        dropout (float, optional): Dropout probability. Defaults to 0.0.
+    """
     def __init__(self, dim_in_G, dim_h_conv, dim_h_lin, dim_out,
                  num_layer_conv, num_layer_lin, num_heads, pool_k_G, dropout=0.):
         super().__init__()
-        self.conv_G = AttentiveGnLConv(in_channels=dim_in_G,
-                                hidden_channels=dim_h_conv,
-                                num_layers=num_layer_conv,
-                                num_heads=num_heads,
-                                dropout=dropout)
+        self.conv_G = AttentiveGnLConv(
+            in_channels=dim_in_G,
+            hidden_channels=dim_h_conv,
+            num_layers=num_layer_conv,
+            num_heads=num_heads,
+            dropout=dropout
+        )
         self.pool_G = SAGPooling(dim_h_conv, ratio=pool_k_G)#, GNN=GATv2Conv)
         self.sort_G = aggr.SortAggregation(k=pool_k_G)
-        self.mlp = MLP(in_channels=dim_h_conv*(pool_k_G),
-                       hidden_channels=dim_h_lin,
-                       out_channels=dim_out,
-                       num_layers=num_layer_lin,
-                       dropout=dropout)
-    
+        self.mlp = MLP(
+            in_channels=dim_h_conv * pool_k_G,
+            hidden_channels=dim_h_lin,
+            out_channels=dim_out,
+            num_layers=num_layer_lin,
+            dropout=dropout
+        )
+
+        self.hps = {
+            'dim_in_G': dim_in_G,
+            'dim_h_conv': dim_h_conv,
+            'dim_h_lin': dim_h_lin,
+            'dim_out': dim_out,
+            'num_layer_conv': num_layer_conv,
+            'num_layer_lin': num_layer_lin,
+            'num_heads': num_heads,
+            'dropout': dropout,
+            'pool_k_G': pool_k_G,
+        }
+        [setattr(self, k, v) for k, v in self.hps.items()]
+
     def forward(self, batch):
+        """Forward pass for the single-channel ablation model.
+
+        Args:
+            batch (torch_geometric.data.HeteroData): A batch of heterogeneous
+                graphs, from which data for 'node' type is extracted.
+
+        Returns:
+            Tensor: Classification logits.
+        """
         x = batch.x_dict['node']
         edge_index = batch.edge_index_dict[('node', 'n2n', 'node')]
         edge_attr = batch.edge_attr_dict[('node', 'n2n', 'node')]
-        batch = batch.batch_dict['node']
+        batch_idx = batch.batch_dict['node']
 
         h = self.conv_G(x=x, edge_index=edge_index, edge_attr=edge_attr)
-        h, edge_index, edge_attr, batch, _, _ = self.pool_G(
-            x=h, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
-        h = self.sort_G(x=h, batch=batch)
+        h, edge_index, edge_attr, batch_idx, _, _ = self.pool_G(
+            x=h, edge_index=edge_index, edge_attr=edge_attr, batch=batch_idx)
+        h = self.sort_G(x=h, batch=batch_idx)
         x = self.mlp(x=h)
 
         return x
 
+    def __repr__(self):
+        return (f"{self.__class__.__name__}("
+                f"dim_in_G={self.dim_in_G}, "
+                f"dim_h_conv={self.dim_h_conv}, "
+                f"dim_h_lin={self.dim_h_lin}, "
+                f"dim_out={self.dim_out}, "
+                f"num_layer_conv={self.num_layer_conv}, "
+                f"num_layer_lin={self.num_layer_lin}, "
+                f"num_heads={self.num_heads}, "
+                f"pool_k_G={self.pool_k_G}, "
+        )
+
 
 class GnLTransformer(GnLTransformer_Hetero):
+    """The Graph and Line Graph Transformer (GnLTransformer) model.
+
+    This class provides a convenient wrapper around `GnLTransformer_Hetero`.
+    It is designed to directly process a batched `HeteroData` object,
+    automatically unpacking the node and edge data for the graph (G) and
+    line graph (L) channels before feeding them through the dual-channel
+    architecture.
+
+    Inherits all arguments from `GnLTransformer_Hetero`.
+
+    Args:
+        dim_in_G (int): Input feature dimension for 'node' type nodes.
+        dim_in_L (int): Input feature dimension for 'edge' type nodes.
+        dim_h_conv (int): Hidden dimension for the `AttentiveGnLConv` layers.
+        dim_h_lin (int): Hidden dimension for the final MLP layers.
+        dim_out (int): The final output dimension of the model.
+        num_layer_conv (int): The number of layers in each `AttentiveGnLConv`
+            module.
+        num_layer_lin (int): The number of layers in the final MLP.
+        num_heads (int, optional): The number of attention heads. Defaults to 4.
+        pool_k_G (int, optional): The number of 'node' type nodes to keep after
+            pooling. Defaults to 30.
+        pool_k_L (int, optional): The number of 'edge' type nodes to keep after
+            pooling. Defaults to 30.
+        dropout (float, optional): Dropout probability. Defaults to 0.0.
+    """
     def forward(self, batch):
-        x_G, edge_index_G, edge_attr_G, batch_G = \
-            batch.x_dict['node'], batch.edge_index_dict[('node', 'n2n', 'node')], \
-                batch.edge_attr_dict[('node', 'n2n', 'node')], batch.batch_dict['node']
-        x_L, edge_index_L, edge_attr_L, batch_L = \
-            batch.x_dict['edge'], batch.edge_index_dict[('edge', 'e2e', 'edge')], \
-                batch.edge_attr_dict[('edge', 'e2e', 'edge')], batch.batch_dict['edge']
+        """Forward pass for the GnLTransformer model.
+
+        Args:
+            batch (torch_geometric.data.HeteroData): A batch of heterogeneous
+                graphs containing data for both 'node' and 'edge' types.
+        
+        Returns:
+            Tensor: Classification logits.
+        """
+        x_G, edge_index_G, edge_attr_G, batch_G = (
+            batch.x_dict['node'],
+            batch.edge_index_dict[('node', 'n2n', 'node')],
+            batch.edge_attr_dict[('node', 'n2n', 'node')],
+            batch.batch_dict['node']
+        )
+        x_L, edge_index_L, edge_attr_L, batch_L = (
+            batch.x_dict['edge'],
+            batch.edge_index_dict[('edge', 'e2e', 'edge')],
+            batch.edge_attr_dict[('edge', 'e2e', 'edge')],
+            batch.batch_dict['edge']
+        )
 
         x_G = self.conv_G(x_G, edge_index_G, edge_attr_G)
         x_L = self.conv_L(x_L, edge_index_L, edge_attr_L)
